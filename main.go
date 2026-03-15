@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -36,6 +35,10 @@ type model struct {
 	categories      []string
 	catCursor       int
 	store           *Store
+	filterAccount   string
+	accounts        []string
+	width           int
+	height          int
 }
 
 func collectCategories(txns []Transaction, rules []Rule) []string {
@@ -57,6 +60,19 @@ func collectCategories(txns []Transaction, rules []Rule) []string {
 	}
 	sort.Strings(cats)
 	return cats
+}
+
+func collectAccounts(txns []Transaction) []string {
+	seen := make(map[string]bool)
+	for _, t := range txns {
+		seen[t.Account] = true
+	}
+	accs := make([]string, 0, len(seen))
+	for a := range seen {
+		accs = append(accs, a)
+	}
+	sort.Strings(accs)
+	return accs
 }
 
 func buildAccountSummary(txns []Transaction) map[string]Öre {
@@ -109,6 +125,7 @@ func initialModelFromStore(store *Store, rules []Rule) (model, error) {
 		rules:           rules,
 		categories:      collectCategories(txns, rules),
 		store:           store,
+		accounts:        collectAccounts(txns),
 	}, nil
 }
 
@@ -119,6 +136,11 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// global keys that work on every screen
 		switch msg.String() {
@@ -164,8 +186,31 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.screen = summaryScreen
 	case "c":
 		m.screen = categorySummaryScreen
+	case "tab":
+		m.filterAccount = m.nextAccount()
 	}
 	return m, nil
+}
+
+func (m model) nextAccount() string {
+	if m.filterAccount == "" {
+		// currently showing all - switch to first account
+		if len(m.accounts) > 0 {
+			return m.accounts[0]
+		}
+		return ""
+	}
+
+	// find current account, advance to next
+	for i, a := range m.accounts {
+		if a == m.filterAccount {
+			if i+1 < len(m.accounts) {
+				return m.accounts[i+1]
+			}
+			return "" // wrap around to "all"
+		}
+	}
+	return ""
 }
 
 func (m model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -224,130 +269,6 @@ func (m model) updateCategorySummary(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-func (m model) View() tea.View {
-
-	switch m.screen {
-	case listScreen:
-		return m.viewList()
-	case detailScreen:
-		return m.viewDetail()
-	case summaryScreen:
-		return m.viewSummary()
-	case categoryScreen:
-		return m.viewCategory()
-	case categorySummaryScreen:
-		return m.viewCategorySummaryScreen()
-
-	default:
-		return tea.NewView("unknown screen")
-	}
-}
-
-func (m model) viewList() tea.View {
-	var b strings.Builder
-
-	b.WriteString("\n fintrack\n\n")
-
-	var running Öre
-	for i, t := range m.transactions {
-		running += t.Amount
-		cursor := " "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		fmt.Fprintf(&b,
-			"%s%s  %-25s %12s %12s\n",
-			cursor,
-			t.Date.Format("2006-01-02"),
-			t.Payee,
-			t.Amount,
-			running,
-		)
-
-	}
-	fmt.Fprintf(&b, " \n Total balance %12s\n", m.totalBalance)
-	b.WriteString("\n j/k to navigate • enter detail • s for summary view • c for category summary • q to quit\n")
-	return tea.NewView(b.String())
-}
-
-func (m model) viewDetail() tea.View {
-	t := m.transactions[m.cursor]
-
-	var b strings.Builder
-
-	b.WriteString("\n fintracker — transaction detail\n\n")
-	fmt.Fprintf(&b, " Date:     %s\n", t.Date.Format("2006-01-01"))
-	fmt.Fprintf(&b, " Payee:    %s\n", t.Payee)
-	fmt.Fprintf(&b, " Amount:   %s\n", t.Amount)
-	fmt.Fprintf(&b, " Account:  %s\n", t.Account)
-	fmt.Fprintf(&b, " Category: %s\n", t.Category)
-
-	if t.Category == "" {
-		b.WriteString("\n (uncategorized)\n")
-	}
-	b.WriteString("\n c to categorise • esc back to list\n")
-
-	return tea.NewView(b.String())
-}
-
-func (m model) viewSummary() tea.View {
-	var b strings.Builder
-	b.WriteString("\n fintracker — summary per account\n\n")
-
-	keys := make([]string, 0, len(m.accountSummary))
-	for k := range m.accountSummary {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, account := range keys {
-		fmt.Fprintf(&b, "%s: %s\n", account, m.accountSummary[account])
-	}
-
-	return tea.NewView(b.String())
-}
-
-func (m model) viewCategory() tea.View {
-	t := m.transactions[m.cursor]
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n Categorize: %s — %s\n\n", t.Payee, t.Amount)
-	for i, cat := range m.categories {
-		cursor := " "
-		if i == m.catCursor {
-			cursor = "> "
-		}
-		marker := ""
-		if cat == t.Category {
-			marker = " (current)"
-		}
-		fmt.Fprintf(&b, "%s%s%s\n", cursor, cat, marker)
-
-	}
-	b.WriteString("\n j/k navigate • enter select • esc back\n")
-
-	return tea.NewView(b.String())
-}
-
-func (m model) viewCategorySummaryScreen() tea.View {
-	var b strings.Builder
-	b.WriteString("\n Categories:\n\n")
-
-	keys := make([]string, 0, len(m.categorySummary))
-	for k := range m.categorySummary {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, category := range keys {
-		fmt.Fprintf(&b, " %-25s %12s\n", category, m.categorySummary[category])
-	}
-
-	b.WriteString("\n esc back\n")
-
-	return tea.NewView(b.String())
 }
 
 func main() {
