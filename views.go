@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	lipgloss "charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 
 	tea "charm.land/bubbletea/v2"
 	"sort"
@@ -15,132 +14,67 @@ const uncategorized = "(uncategorized)"
 
 func (m model) View() tea.View {
 
+	if !m.ready {
+		return tea.NewView("  loading...")
+	}
+
+	var content string
+
 	switch m.screen {
 	case listScreen:
-		return m.viewList()
+		content = m.list.View()
 	case detailScreen:
-		return m.viewDetail()
+		header := titleStyle.Render("fintracker — detail")
+		body := m.viewport.View()
+		footer := helpStyle.Render("c categorise • ↑/↓ scroll • esc back")
+		content = header + "\n" + body + "\n" + footer
 	case summaryScreen:
-		return m.viewSummary()
+		header := titleStyle.Render("fintracker — summary")
+		body := m.viewport.View()
+		footer := helpStyle.Render("↑/↓ scroll • esc back")
+		content = header + "\n" + body + "\n" + footer
+
 	case categoryScreen:
-		return m.viewCategory()
-	case categorySummaryScreen:
-		return m.viewCategorySummaryScreen()
+		t := m.transactions[m.selectedIndex]
+		header := titleStyle.Render(fmt.Sprintf("Categorize: %s", t.Payee))
+		prompt := lipgloss.NewStyle().PaddingLeft(2).Render("Category: ")
+		input := m.catInput.View()
 
-	default:
-		return tea.NewView("unknown screen")
+		hint := lipgloss.NewStyle().
+			Foreground(colorMuted).PaddingLeft(2).MarginTop(1).
+			Render("tab complete • enter confirm • esc cancel")
+		existing := lipgloss.NewStyle().
+			Foreground(colorMuted).PaddingLeft(2).MarginTop(1).
+			Render("Existing: " + strings.Join(m.categories, ", "))
+
+		content = header + "\n" + prompt + input + "\n" + existing + "\n" + hint
+
 	}
+
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
 
-func (m model) viewList() tea.View {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("fintracker"))
-	b.WriteString("\n")
-
-	// Build table rows
-	headers := []string{"", "Date", "Payee", "Amount", "Balance", "Category"}
-
-	var rows [][]string
-	var running Öre
-
-	for i, t := range m.transactions {
-		if m.filterAccount != "" && t.Account != m.filterAccount {
-			continue
-		}
-		running += t.Amount
-
-		cursor := " "
-		if i == m.cursor {
-			cursor = ">"
-		}
-
-		cat := t.Category
-		if cat == "" {
-			cat = "-"
-		}
-
-		rows = append(rows, []string{
-			cursor,
-			t.Date.Format("2006-01-02"),
-			t.Payee,
-			t.Amount.String(),
-			running.String(),
-			cat,
-		})
-	}
-
-	t := table.New().
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorMuted)).
-		Headers(headers...).
-		Rows(rows...).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			base := lipgloss.NewStyle().PaddingRight(2)
-
-			if row == table.HeaderRow {
-				return base.Bold(true).Foreground(colorPrimary)
-			}
-
-			// Highlight selected row
-			if row < len(rows) && rows[row][0] == ">" {
-				base = base.Bold(true)
-			}
-
-			switch col {
-			case 0: // cursor
-				return base.Foreground(colorPrimary).Width(2)
-			case 3, 4: // amount, balance
-				return base.Align(lipgloss.Right)
-			case 5: // category
-				if row < len(rows) && rows[row][5] == "-" {
-					return base.Foreground(colorMuted).Italic(true)
-				}
-				return base.Foreground(colorSecondary)
-			}
-			return base
-		})
-	b.WriteString(t.Render())
-
-	// Footer
-	filter := "all accounts"
-	if m.filterAccount != "" {
-		filter = m.filterAccount
-	}
-	footer := fmt.Sprintf(" %s • %d transactions • balance: %s",
-		filter, len(rows), m.totalBalance)
-	b.WriteString("\n" + lipgloss.NewStyle().Foreground(colorMuted).Render(footer))
-
-	help := "  j/k navigate • enter detail • summary • c categories • tab filter account • q quit"
-	b.WriteString("\n" + helpStyle.Render(help))
-
-	return tea.NewView(b.String())
-
-}
-
-func (m model) viewDetail() tea.View {
-	t := m.transactions[m.cursor]
-
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("fintracker — detail"))
-	b.WriteString("\n\n")
+func (m model) renderDetail() string {
+	t := m.transactions[m.selectedIndex]
 
 	labelStyle := lipgloss.NewStyle().
-		Width(12).
+		Width(14).
 		Foreground(colorMuted).
 		PaddingLeft(2)
 
 	valueStyle := lipgloss.NewStyle().Bold(true)
 
+	var b strings.Builder
 	row := func(label, value string) {
 		b.WriteString(labelStyle.Render(label))
 		b.WriteString(valueStyle.Render(value))
 		b.WriteString("\n")
-
 	}
 
-	row("Date", t.Date.Format("2006-01-02"))
+	b.WriteString("\n")
+	row("Date", t.Date.Format("2006-01-02 (Monday)"))
 	row("Payee", t.Payee)
 	row("Amount", amountStyle(t.Amount).Render(t.Amount.String()))
 	row("Account", t.Account)
@@ -152,19 +86,41 @@ func (m model) viewDetail() tea.View {
 		row("Category", uncategorizedStyle.Render(uncategorized))
 
 	}
-
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  c categorize • esc back • q quit"))
 
-	return tea.NewView(b.String())
+	// Show other transactions from the same payee
+	b.WriteString(lipgloss.NewStyle().
+		Bold(true).PaddingLeft(2).MarginTop(1).Render("Other transactions from " + t.Payee))
+	b.WriteString("\n\n")
+
+	count := 0
+	for _, other := range m.transactions {
+		if other.Payee == t.Payee && other.Date != t.Date {
+			fmt.Fprintf(&b, " %s %s\n",
+				other.Date.Format("2006-01-02"),
+				amountStyle(other.Amount).Render(other.Amount.String()),
+			)
+			count++
+			if count >= 10 {
+				b.WriteString(" ....\n")
+				break
+			}
+
+		}
+	}
+
+	if count == 0 {
+		b.WriteString(lipgloss.NewStyle().
+			Padding(2).Foreground(colorMuted).Render("No other transactions"))
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 // per-account and pe-category summary view
-func (m model) viewSummary() tea.View {
+func (m model) renderSummary() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("fintracker — summary"))
-	b.WriteString("\n")
-
 
 	// Accounts
 	b.WriteString(lipgloss.NewStyle().
@@ -229,42 +185,7 @@ func (m model) viewSummary() tea.View {
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  esc back • q quit"))
 
-	return tea.NewView(b.String())
-}
-
-func (m model) viewCategory() tea.View {
-	t := m.transactions[m.cursor]
-
-	var b strings.Builder
-
-	title := fmt.Sprintf("Categorize: %s — %s",
-		t.Payee, amountStyle(t.Amount).Render(t.Amount.String()))
-	b.WriteString(titleStyle.Render(title))
-	b.WriteString("\n\n")
-
-	for i, cat := range m.categories {
-		cursor := " "
-		if i == m.catCursor {
-			cursor = cursorStyle.Render("> ")
-		}
-
-		style := lipgloss.NewStyle()
-		if cat == t.Category {
-			style = style.Foreground(colorSecondary).Bold(true)
-		}
-
-		marker := ""
-		if cat == t.Category {
-			marker = " ✓"
-		}
-
-		fmt.Fprintf(&b, "%s%s%s\n", cursor, style.Render(cat), marker)
-
-	}
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  j/k navigate • enter select • esc back\n"))
-
-	return tea.NewView(b.String())
+	return b.String()
 }
 
 func (m model) viewCategorySummaryScreen() tea.View {

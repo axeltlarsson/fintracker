@@ -36,3 +36,23 @@ func CalculateBalance(txns []Transaction) Öre {
 	}
 	return balance
 }
+
+// Satisfy list.DefaultItem so we can show Transactions in bubbbles/list
+
+func (t Transaction) Title() string {
+	return fmt.Sprintf("%s %s", t.Date.Format("2006-01-02"), t.Payee)
+}
+
+func (t Transaction) Description() string {
+	cat := t.Category
+	if cat == "" {
+		cat = uncategorized
+	}
+
+	return fmt.Sprintf("%12s • %s • %s", t.Amount, t.Account, cat)
+}
+
+// Satisfy list.Item - fuzzy search
+func (t Transaction) FilterValue() string {
+	return t.Payee + " " + t.Category + " " + t.Account
+}

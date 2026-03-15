@@ -5,8 +5,15 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 )
 
 type importSpec struct {
@@ -16,31 +23,100 @@ type importSpec struct {
 
 type screen int
 
+const title = "fintracker"
 const (
 	listScreen screen = iota
 	detailScreen
 	summaryScreen
 	categoryScreen
-	categorySummaryScreen
+	categorySummaryScreen // TODO might not need it as is right now
 )
 
 type model struct {
+	// Data
 	transactions    []Transaction
-	cursor          int
 	totalBalance    Öre
 	accountSummary  map[string]Öre
-	screen          screen
 	categorySummary map[string]Öre
 	rules           []Rule
 	categories      []string
-	catCursor       int
 	store           *Store
-	filterAccount   string
-	accounts        []string
-	width           int
-	height          int
+
+	// UI components - each is a Bubble with its own state
+	list     list.Model
+	viewport viewport.Model
+	catInput textinput.Model
+	help     help.Model
+	keys     keyMap         // list/global keymap
+	catKeys  categoryKeyMap // category screen keybindings
+
+	// UI state
+	screen        screen
+	selectedIndex int
+	filterAccount string
+	accounts      []string
+	isDark        bool
+	width         int
+	height        int
+	ready         bool // true once we've received the first WindowSizeMsg
 }
 
+func initialModelFromStore(store *Store, rules []Rule) (model, error) {
+	txns, err := store.LoadTransactions()
+
+	if err != nil {
+		return model{}, err
+	}
+
+	if len(txns) == 0 {
+		return model{}, fmt.Errorf("no transaction found in database")
+	}
+
+	// Apply rules to any uncategorised transactions
+	if matched := categorize(txns, rules); matched > 0 {
+		if _, err := store.UpsertTransactions(txns); err != nil {
+			return model{}, fmt.Errorf("saving categorized transactions: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "categorized %d transactions from rules\n", matched)
+	}
+
+	// Convert transactions to list items
+	items := make([]list.Item, len(txns))
+	for i, t := range txns {
+		items[i] = t
+	}
+
+	// Create list
+	delegate := list.NewDefaultDelegate()
+	l := list.New(items, delegate, 0, 0) // size set on first WindowSizeMsg
+	l.Title = "fintracker"
+	l.SetShowStatusBar(true)
+	l.SetShowFilter(true)
+
+	// Category text input
+	ti := textinput.New()
+	ti.Placeholder = "New category..."
+	ti.CharLimit = 50
+
+	keys := newKeyMap()
+	catKeys := newCategoryKeyMap()
+
+	return model{
+		transactions:    txns,
+		totalBalance:    CalculateBalance(txns),
+		accountSummary:  buildAccountSummary(txns),
+		categorySummary: buildCategorySummary(txns),
+		rules:           rules,
+		categories:      collectCategories(txns, rules),
+		store:           store,
+		list:            l,
+		catInput:        ti,
+		help:            help.New(),
+		keys:            keys,
+		catKeys:         catKeys,
+		accounts:        collectAccounts(txns),
+	}, nil
+}
 func collectCategories(txns []Transaction, rules []Rule) []string {
 	seen := make(map[string]bool)
 
@@ -98,98 +174,122 @@ func buildCategorySummary(txns []Transaction) map[string]Öre {
 	return summary
 }
 
-func initialModelFromStore(store *Store, rules []Rule) (model, error) {
-	txns, err := store.LoadTransactions()
-
-	if err != nil {
-		return model{}, err
-	}
-
-	if len(txns) == 0 {
-		return model{}, fmt.Errorf("no transaction found")
-	}
-
-	// Apply rules to any uncategorised transactions
-	if matched := categorize(txns, rules); matched > 0 {
-		if _, err := store.UpsertTransactions(txns); err != nil {
-			return model{}, fmt.Errorf("saving categorized transactions: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "categorized %d transactions from rules\n", matched)
-	}
-
-	return model{
-		transactions:    txns,
-		totalBalance:    CalculateBalance(txns),
-		accountSummary:  buildAccountSummary(txns),
-		categorySummary: buildCategorySummary(txns),
-		rules:           rules,
-		categories:      collectCategories(txns, rules),
-		store:           store,
-		accounts:        collectAccounts(txns),
-	}, nil
-}
-
 func (m model) Init() tea.Cmd {
-	// no initial commands to run
-	return nil
+	return tea.RequestBackgroundColor
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+
+	case tea.BackgroundColorMsg:
+		m.isDark = msg.IsDark()
+		m.list.Styles = list.DefaultStyles(m.isDark)
+		delegate := list.NewDefaultDelegate()
+		delegate.Styles = list.NewDefaultItemStyles(m.isDark)
+		m.list.SetDelegate(delegate)
+		m.help.Styles = help.DefaultStyles(m.isDark)
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		headerHeight := 0
+		footerHeight := 2
+
+		if !m.ready {
+			m.viewport = viewport.New()
+			m.ready = true
+		}
+
+		m.list.SetSize(msg.Width, msg.Height)
+		m.catInput.SetWidth(msg.Width - 4)
+		m.viewport.SetWidth(msg.Width - 4)
+		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
+		m.help.SetWidth(msg.Width)
+
 		return m, nil
 
 	case tea.KeyPressMsg:
-		// global keys that work on every screen
-		switch msg.String() {
-		case "q", "ctrl+c":
+		if key.Matches(msg, m.keys.Quit) && m.screen != listScreen {
+			m.screen = listScreen
+			return m, nil
+		}
+	}
+
+	// Dispatch to screen-specific update
+
+	switch m.screen {
+	case listScreen:
+		return m.updateList(msg)
+	case detailScreen:
+		return m.updateDetail(msg)
+	case summaryScreen:
+		return m.updateSummary(msg)
+	case categoryScreen:
+		return m.updateCategory(msg)
+
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		// Don't intercept keys when the list is filtering
+		if m.list.FilterState() == list.Filtering {
+			break
+		}
+		switch {
+		case key.Matches(msg, m.keys.Enter):
+			if item, ok := m.list.SelectedItem().(Transaction); ok {
+				_ = item
+				m.selectedIndex = m.list.Index()
+				m.screen = detailScreen
+				m.viewport.SetContent(m.renderDetail())
+				m.viewport.GotoTop()
+			}
+			return m, nil
+		case key.Matches(msg, m.keys.Summary):
+			m.screen = summaryScreen
+			m.viewport.SetContent(m.renderSummary())
+
+			m.viewport.GotoTop()
+			return m, nil
+		case key.Matches(msg, m.keys.Filter):
+			m.filterAccount = m.nextAccount()
+			m.refreshListItems()
+			return m, nil
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 
 		}
-
-		// screen-specific keys
-
-		switch m.screen {
-		case listScreen:
-			return m.updateList(msg)
-		case detailScreen:
-			return m.updateDetail(msg)
-		case summaryScreen:
-			return m.updateSummary(msg)
-		case categoryScreen:
-			return m.updateCategory(msg)
-		case categorySummaryScreen:
-			return m.updateCategorySummary(msg)
-
-		}
 	}
-	return m, nil
+
+	// forward everything else to the list component
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+
 }
 
-func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q":
-		return m, tea.Quit
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
+func (m *model) refreshListItems() {
+	var items []list.Item
+	for _, t := range m.transactions {
+		if m.filterAccount != "" && t.Account != m.filterAccount {
+			continue
 		}
-	case "down", "j":
-		if m.cursor < len(m.transactions)-1 {
-			m.cursor++
-		}
-	case "enter":
-		m.screen = detailScreen
-	case "s":
-		m.screen = summaryScreen
-	case "c":
-		m.screen = categorySummaryScreen
-	case "tab":
-		m.filterAccount = m.nextAccount()
+		items = append(items, t)
 	}
-	return m, nil
+	m.list.SetItems(items)
+
+	title := title
+	if m.filterAccount != "" {
+		title += " — " + m.filterAccount
+	}
+	m.list.Title = title
 }
 
 func (m model) nextAccount() string {
@@ -213,62 +313,111 @@ func (m model) nextAccount() string {
 	return ""
 }
 
-func (m model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.screen = listScreen
-	case "c":
-		m.catCursor = 0
-		m.screen = categoryScreen
+func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.screen = listScreen
+			return m, nil
+		case key.Matches(msg, m.keys.Category):
+			m.screen = categoryScreen
+			m.catInput.SetValue("")
+			cmd := m.catInput.Focus()
+			return m, cmd
+		}
 	}
 
-	return m, nil
-
+	// forward to viewport for scrolling
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
-func (m model) updateCategory(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.screen = detailScreen
-	case "up", "k":
-		if m.catCursor > 0 {
-			m.catCursor--
-		}
-	case "down", "j":
-		if m.catCursor < len(m.categories)-1 {
-			m.catCursor++
-		}
-	case "enter":
-		m.transactions[m.cursor].Category = m.categories[m.catCursor]
-		m.accountSummary = buildAccountSummary(m.transactions)
-		m.categorySummary = buildCategorySummary(m.transactions)
+func (m model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 
-		// persist to database
-		if m.store != nil {
-			if err := m.store.UpdateCategory(m.transactions[m.cursor]); err != nil {
-				_ = err // for now silently ignore
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.catKeys.Back):
+			m.catInput.Blur()
+			m.screen = detailScreen
+			return m, nil
+
+		case key.Matches(msg, m.catKeys.Confirm):
+			value := strings.TrimSpace(m.catInput.Value())
+			if value == "" {
+				return m, nil
 			}
+
+			// apply category
+			m.transactions[m.selectedIndex].Category = value
+
+			// persist to database
+			if m.store != nil {
+				if err := m.store.UpdateCategory(m.transactions[m.selectedIndex]); err != nil {
+					_ = err // for now silently ignore
+				}
+			}
+
+			// update derived state
+			m.accountSummary = buildAccountSummary(m.transactions)
+			m.categorySummary = buildCategorySummary(m.transactions)
+			if !contains(m.categories, value) {
+				m.categories = append(m.categories, value)
+				sort.Strings(m.categories)
+			}
+
+			// refresh list items to show new category
+			m.refreshListItems()
+
+			m.catInput.Blur()
+			m.screen = detailScreen
+			m.viewport.SetContent(m.renderDetail())
+			return m, nil
+
+		case key.Matches(msg, m.catKeys.Tab):
+			// Tab completion through existing categories
+			current := m.catInput.Value()
+			for _, cat := range m.categories {
+				if len(cat) > len(current) &&
+					strings.HasPrefix(strings.ToLower(cat), strings.ToLower(current)) {
+					m.catInput.SetValue(cat)
+					break
+				}
+			}
+			return m, nil
 		}
-		m.screen = detailScreen
+
 	}
-	return m, nil
+	// forward to text input
+	var cmd tea.Cmd
+	m.catInput, cmd = m.catInput.Update(msg)
+
+	return m, cmd
 }
 
-func (m model) updateSummary(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.screen = listScreen
+func contains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
 	}
-	return m, nil
+	return false
 }
 
-func (m model) updateCategorySummary(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.screen = listScreen
+func (m model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.screen = listScreen
+			return m, nil
+		}
 	}
-
-	return m, nil
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 func main() {
