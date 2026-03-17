@@ -40,14 +40,12 @@ func (m model) View() tea.View {
 		prompt := lipgloss.NewStyle().PaddingLeft(2).Render("Category: ")
 		input := m.catInput.View()
 
-		hint := lipgloss.NewStyle().
-			Foreground(colorMuted).PaddingLeft(2).MarginTop(1).
-			Render("tab complete • enter confirm • esc cancel")
+		hint := helpStyle.Render(m.help.View(m.catKeys))
 		existing := lipgloss.NewStyle().
 			Foreground(colorMuted).PaddingLeft(2).MarginTop(1).
 			Render("Existing: " + strings.Join(m.categories, ", "))
 
-		content = header + "\n" + prompt + input + "\n" + existing + "\n" + hint
+		content = header + "\n" + prompt + input + "\n" + existing + "\n\n" + hint
 
 	}
 

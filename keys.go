@@ -91,3 +91,14 @@ func newCategoryKeyMap() categoryKeyMap {
 	}
 
 }
+
+func (k categoryKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Confirm, k.Tab, k.Back}
+}
+
+func (k categoryKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Confirm, k.Tab},
+		{k.Back},
+	}
+}
