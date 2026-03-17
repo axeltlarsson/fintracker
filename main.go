@@ -97,6 +97,7 @@ func initialModelFromStore(store *Store, rules []Rule) (model, error) {
 	ti := textinput.New()
 	ti.Placeholder = "New category..."
 	ti.CharLimit = 50
+	ti.ShowSuggestions = true
 
 	keys := newKeyMap()
 	catKeys := newCategoryKeyMap()
@@ -323,6 +324,7 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Category):
 			m.screen = categoryScreen
 			m.catInput.SetValue("")
+			m.catInput.SetSuggestions(m.categories)
 			cmd := m.catInput.Focus()
 			return m, cmd
 		}
@@ -371,21 +373,10 @@ func (m model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refresh list items to show new category
 			m.refreshListItems()
 
+			m.catInput.SetSuggestions(m.categories)
 			m.catInput.Blur()
 			m.screen = detailScreen
 			m.viewport.SetContent(m.renderDetail())
-			return m, nil
-
-		case key.Matches(msg, m.catKeys.Tab):
-			// Tab completion through existing categories
-			current := m.catInput.Value()
-			for _, cat := range m.categories {
-				if len(cat) > len(current) &&
-					strings.HasPrefix(strings.ToLower(cat), strings.ToLower(current)) {
-					m.catInput.SetValue(cat)
-					break
-				}
-			}
 			return m, nil
 		}
 
