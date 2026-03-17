@@ -26,6 +26,10 @@ fintracker/
 ├── keys.go            # key.Binding definitions, keyMap
 ├── styles.go          # Lip Gloss style palette
 ├── views.go           # view rendering functions
+├── transaction_test.go    # tests for Öre, CalculateBalance
+├── parse_test.go          # tests for parseAmount, parseTransactions
+├── store_test.go          # tests for Store (in-memory SQLite)
+├── categorize_test.go     # tests for categorize, loadRules
 ├── testdata/
 │   ├── seb.csv
 │   └── rules.yaml
@@ -84,7 +88,7 @@ fintracker/
 - [x] Zero values
 - [ ] Generics (mentioned, not deeply used)
 - [ ] iter package and range-over-function (mentioned, not used)
-- [ ] Testing (table-driven, subtests, coverage, race detector)
+- [x] Testing (table-driven, subtests, coverage, race detector)
 - [ ] Fuzz testing
 - [ ] Goroutines, channels, select
 - [ ] context.Context
@@ -186,3 +190,8 @@ fintracker/
 **Where:** claude.ai
 **Covered:** Phases 1–7 of fintracker. Built the full application from scratch: TUI with Bubble Tea v2, CSV parsing, YAML categorization rules, SQLite persistence with modernc.org/sqlite, Lip Gloss styling, Bubbles components (list, viewport, textinput, help, table). Also covered: Go module system, Nix integration (devShell, buildGoModule vs gomod2nix), CGo tradeoffs, cross-compilation, sum type workarounds, FP primitives in Go, struct embedding/shadowing rules.
 **Notes:** Project name is fintracker. Axel prefers project-first learning (build the thing, learn concepts as needed). Created CLAUDE.md and PROGRESS.md for continuing in Claude Code.
+
+### Session 2 — testing (Phase 8)
+**Date:** 2026-03-18
+**Covered:** Phase 8 (testing). Table-driven tests with subtests for parseAmount, Öre.String(), CalculateBalance, parseTransactions, categorize, loadRules, and Store (upsert round-trip with in-memory SQLite). Test helper with t.Helper()/t.Cleanup(). Coverage profiling (go test -cover, -coverprofile). Race detector (-race). Found and fixed a bug: parseAmount silently truncated >2 decimal digits, now returns an error. Learned fmt.Errorf verbs (%v, %q, %w) and error wrapping.
+**Next:** Phase 9 (fuzz testing) — fuzz parseAmount to discover more edge cases.

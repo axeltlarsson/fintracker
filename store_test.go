@@ -1,0 +1,144 @@
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+// newTestStore creates a in-memory Store that auto-closes after test ends
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
+func TestUpsertAndLoad(t *testing.T) {
+	store := newTestStore(t)
+
+	txns := []Transaction{
+		{
+			Date:    time.Date(2026, 1, 15, 19, 30, 0, 0, time.UTC),
+			Amount:  -49_50,
+			Payee:   "ICA Nära",
+			Account: "SEB",
+		},
+		{
+			Date:     time.Date(2026, 1, 17, 18, 20, 0, 0, time.UTC),
+			Amount:   25000_00,
+			Payee:    "Lön",
+			Account:  "SEB",
+			Category: "Inkomst",
+		},
+	}
+
+	inserted, err := store.UpsertTransactions(txns)
+
+	if err != nil {
+		t.Fatalf("UpsertTransactions: %v", err)
+	}
+	if inserted != 2 {
+		t.Fatalf("inserted = %d, want 2", inserted)
+	}
+
+	// Round-trip - load it back
+	loaded, err := store.LoadTransactions()
+	if err != nil {
+		t.Fatalf("LoadTransactions: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadTransactions got %d, expected 2", len(loaded))
+	}
+
+	if loaded[0].Payee != "ICA Nära" {
+		t.Errorf("loaded[0].Payee = %q, want %q", loaded[0].Payee, "ICA Nära")
+	}
+	if loaded[1].Category != "Inkomst" {
+		t.Errorf("loaded[1].Category = %q, want %q", loaded[1].Category, "Inkomst")
+	}
+
+	// test upsert - inserting same transaction again
+
+	inserted, err = store.UpsertTransactions(txns[:1])
+	if err != nil {
+		t.Fatalf("UpsertTransactions transaction 0: %v", err)
+	}
+	if inserted != 1 {
+		t.Errorf("inserted = %d, want 1", inserted)
+	}
+
+	// modify a transaction and upsert
+	txns[0].Category = "Groceries"
+	inserted, err = store.UpsertTransactions(txns[:1])
+	if err != nil {
+		t.Fatalf("UpsertTransactions with changed data: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+	// load the transaction and verify correct data stored
+
+	loaded, err = store.LoadTransactions()
+	if err != nil {
+		t.Fatalf("LoadTransactions: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("LoadTransactions got %d, want 2", len(loaded))
+	}
+	// check data
+	if loaded[0].Category != "Groceries" {
+		t.Errorf("loaded[0].Category = %q, want %q", loaded[0].Category, "Groceries")
+	}
+
+	// update category of existing and upsert
+	txns[0].Category = "livsmedel"
+	inserted, err = store.UpsertTransactions(txns[:1])
+	if err != nil {
+		t.Fatalf("UpsertTransactions with changed data: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+	// load the transaction and verify correct data stored
+
+	loaded, err = store.LoadTransactions()
+	if err != nil {
+		t.Fatalf("LoadTransactions: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("LoadTransactions got %d, want 2", len(loaded))
+	}
+	// check data
+	if loaded[0].Category != "livsmedel" {
+		t.Errorf("loaded[0].Category = %q, want %q", loaded[0].Category, "livsmedel")
+	}
+
+	// for transactions with existing category, setting it to empty string should preserve old category
+	txns[0].Category = ""
+	inserted, err = store.UpsertTransactions(txns[:1])
+	if err != nil {
+		t.Fatalf("UpsertTransactions with changed data: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+	// load the transaction and verify correct data stored
+
+	loaded, err = store.LoadTransactions()
+	if err != nil {
+		t.Fatalf("LoadTransactions: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("LoadTransactions got %d, want 2", len(loaded))
+	}
+	// check data
+	if loaded[0].Category != "livsmedel" {
+		t.Errorf("loaded[0].Category = %q, want %q", loaded[0].Category, "livsmedel")
+	}
+
+
+
+}

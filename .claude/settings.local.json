@@ -1,8 +1,9 @@
 {
-  "outputStyle": "Learning",
   "permissions": {
     "allow": [
-      "Bash(go doc:*)"
+      "Bash(go doc:*)",
+      "Bash(go test:*)"
     ]
-  }
+  },
+  "outputStyle": "Learning"
 }

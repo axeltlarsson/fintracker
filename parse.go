@@ -71,10 +71,11 @@ func parseAmount(s string) (Öre, error) {
 	if len(parts) == 2 {
 		// pad or truncate to exactly 2 digits
 		örePart := parts[1]
+		if len(örePart) > 2 {
+			return 0, fmt.Errorf("too many decimal digits: %q", s)
+		}
 		if len(örePart) == 1 {
 			örePart += "0"
-		} else if len(örePart) > 2 {
-			örePart = örePart[:2]
 		}
 		öre, err = strconv.ParseInt(örePart, 10, 64)
 		if err != nil {
