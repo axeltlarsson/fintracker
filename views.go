@@ -7,6 +7,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2/table"
 	"sort"
 )
 
@@ -120,70 +121,85 @@ func (m model) renderDetail() string {
 func (m model) renderSummary() string {
 	var b strings.Builder
 
-	// Accounts
+	// Accounts table
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		PaddingLeft(2).
-		MarginBottom(1).
 		Render("Accounts"))
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
-	keys := make([]string, 0, len(m.accountSummary))
-	for k := range m.accountSummary {
+	var accountRows [][]string
+	for _, acc := range sortedKeys(m.accountSummary) {
+		amount := m.accountSummary[acc]
+		accountRows = append(accountRows, []string{acc, amount.String()})
+	}
+
+	at := table.New().
+		Border(lipgloss.RoundedBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(colorMuted)).
+		Headers("Account", "Balance").
+		Rows(accountRows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			s := lipgloss.NewStyle().PaddingRight(3)
+			if row == table.HeaderRow {
+				return s.Bold(true).Foreground(colorPrimary)
+			}
+			if col == 1 {
+				return s.Align(lipgloss.Right)
+			}
+			return s
+		})
+	b.WriteString(at.Render())
+	b.WriteString("\n\n")
+
+	// Category table
+	b.WriteString(lipgloss.NewStyle().
+		Bold(true).
+		PaddingLeft(2).
+		Render("Categories"))
+	b.WriteString("\n\n")
+
+	var categoryRows [][]string
+	for _, acc := range sortedKeys(m.categorySummary) {
+		amount := m.categorySummary[acc]
+		categoryRows = append(categoryRows, []string{acc, amount.String()})
+	}
+
+	// add last row with total
+	categoryRows = append(categoryRows, []string{"Total", amountStyle(m.totalBalance).Render(m.totalBalance.String())})
+	ct := table.New().
+		Border(lipgloss.RoundedBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(colorMuted)).
+		Headers("Category", "Balance").
+		Rows(categoryRows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			s := lipgloss.NewStyle().PaddingRight(3)
+			if row == table.HeaderRow {
+				s = s.Bold(true).Foreground(colorPrimary)
+			}
+			if col == 1 && row != table.HeaderRow {
+				s = s.Align(lipgloss.Right)
+			}
+			if row == len(categoryRows)-1 {
+				// last row is total row
+				s = s.Bold(true)
+			}
+			return s
+		})
+	b.WriteString(ct.Render())
+
+	b.WriteString(helpStyle.Render("esc back • q quit"))
+
+	return b.String()
+}
+
+func sortedKeys(m map[string]Öre) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-
-	for _, account := range keys {
-		amount := m.accountSummary[account]
-		fmt.Fprintf(&b, " %-20s %12s\n",
-			lipgloss.NewStyle().PaddingLeft(2).Render(account), amountStyle(amount).Render(amount.String()),
-		)
-	}
-
-	// Categories
-	catSummary := make(map[string]Öre)
-	for _, t := range m.transactions {
-		cat := t.Category
-		if cat == "" {
-			cat = uncategorized
-		}
-		catSummary[cat] += t.Amount
-	}
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().
-		Bold(true).
-		PaddingLeft(2).
-		MarginBottom(1).
-		Render("Categories"))
-	b.WriteString("\n")
-
-	catKeys := make([]string, 0, len(catSummary))
-	for k := range catSummary {
-		catKeys = append(catKeys, k)
-	}
-	sort.Strings(catKeys)
-
-	for _, cat := range catKeys {
-		amount := catSummary[cat]
-		style := categoryStyle.PaddingLeft(2)
-		if cat == uncategorized {
-			style = uncategorizedStyle.PaddingLeft(2)
-		}
-		fmt.Fprintf(&b, " %-50s %12s\n",
-			style.Render(cat),
-			amountStyle(amount).Render(amount.String()),
-		)
-	}
-
-	b.WriteString("\n")
-	totalLabel := lipgloss.NewStyle().Bold(true).PaddingLeft(2).Render("Total")
-	fmt.Fprintf(&b, "%-20s %s\n", totalLabel,
-		amountStyle(m.totalBalance).Render(m.totalBalance.String()))
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  esc back • q quit"))
-
-	return b.String()
+	return keys
 }
 
 func (m model) viewCategorySummaryScreen() tea.View {
