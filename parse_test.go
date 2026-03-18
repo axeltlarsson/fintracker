@@ -75,3 +75,24 @@ func TestParseTransaction(t *testing.T) {
 	}
 
 }
+
+func FuzzParseAmount(f *testing.F) {
+	// seed corpus - give the fuzzer real-world examples to mutate from
+	f.Add("100,00")
+	f.Add("-49,50")
+	f.Add("0")
+	f.Add("1 000,00")
+	f.Add("")
+	f.Add(",")
+	f.Add("abc")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		öre, err := parseAmount(s)
+		if err != nil {
+			return // errors are fine, we're looking for panics
+		}
+		// Property: if parsing succeded, String() should not panic
+		_ = öre.String()
+	})
+
+}
