@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -8,12 +8,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2/table"
+	"fintracker/internal/finance"
 	"sort"
 )
 
 const uncategorized = "(uncategorized)"
 
-func (m model) View() tea.View {
+func (m Model) View() tea.View {
 
 	if !m.ready {
 		return tea.NewView("  loading...")
@@ -55,7 +56,7 @@ func (m model) View() tea.View {
 	return v
 }
 
-func (m model) renderDetail() string {
+func (m Model) renderDetail() string {
 	t := m.transactions[m.selectedIndex]
 
 	labelStyle := lipgloss.NewStyle().
@@ -118,7 +119,7 @@ func (m model) renderDetail() string {
 }
 
 // per-account and pe-category summary view
-func (m model) renderSummary() string {
+func (m Model) renderSummary() string {
 	var b strings.Builder
 
 	// Accounts table
@@ -193,7 +194,7 @@ func (m model) renderSummary() string {
 	return b.String()
 }
 
-func sortedKeys(m map[string]Öre) []string {
+func sortedKeys(m map[string]finance.Öre) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -202,7 +203,7 @@ func sortedKeys(m map[string]Öre) []string {
 	return keys
 }
 
-func (m model) viewCategorySummaryScreen() tea.View {
+func (m Model) viewCategorySummaryScreen() tea.View {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Categories"))
 

@@ -1,6 +1,7 @@
-package main
+package store
 
 import (
+	"fintracker/internal/finance"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ func newTestStore(t *testing.T) *Store {
 func TestUpsertAndLoad(t *testing.T) {
 	store := newTestStore(t)
 
-	txns := []Transaction{
+	txns := []finance.Transaction{
 		{
 			Date:    time.Date(2026, 1, 15, 19, 30, 0, 0, time.UTC),
 			Amount:  -49_50,
@@ -138,7 +139,5 @@ func TestUpsertAndLoad(t *testing.T) {
 	if loaded[0].Category != "livsmedel" {
 		t.Errorf("loaded[0].Category = %q, want %q", loaded[0].Category, "livsmedel")
 	}
-
-
 
 }

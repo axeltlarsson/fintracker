@@ -1,10 +1,11 @@
-package main
+package store
 
 import (
 	"database/sql"
 	"fmt"
 	"time"
 
+	"fintracker/internal/finance"
 	_ "modernc.org/sqlite"
 )
 
@@ -50,7 +51,7 @@ func NewStore(path string) (*Store, error) {
 
 // UpsertTransactions upserts transactions into the Store
 // The number of inserted rows is returned, 0 in case of error
-func (s *Store) UpsertTransactions(txns []Transaction) (inserted int, err error) {
+func (s *Store) UpsertTransactions(txns []finance.Transaction) (inserted int, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("beginning transaction: %w", err)
@@ -100,7 +101,7 @@ func (s *Store) UpsertTransactions(txns []Transaction) (inserted int, err error)
 }
 
 // Load transactions from the Store
-func (s *Store) LoadTransactions() ([]Transaction, error) {
+func (s *Store) LoadTransactions() ([]finance.Transaction, error) {
 	rows, err := s.db.Query(`
 		select id, date, amount , payee, account, category
 		from transactions
@@ -111,7 +112,7 @@ func (s *Store) LoadTransactions() ([]Transaction, error) {
 	}
 	defer rows.Close()
 
-	var txns []Transaction
+	var txns []finance.Transaction
 	for rows.Next() {
 		var (
 			id       int64
@@ -130,10 +131,10 @@ func (s *Store) LoadTransactions() ([]Transaction, error) {
 			return nil, fmt.Errorf("parsing date %q: %w", dateStr, err)
 		}
 
-		txns = append(txns, Transaction{
+		txns = append(txns, finance.Transaction{
 			ID:       id,
 			Date:     date,
-			Amount:   Öre(amount),
+			Amount:   finance.Öre(amount),
 			Payee:    payee,
 			Account:  account,
 			Category: category,
@@ -150,7 +151,7 @@ func (s *Store) LoadTransactions() ([]Transaction, error) {
 	return txns, nil
 }
 
-func (s *Store) UpdateCategory(t Transaction) error {
+func (s *Store) UpdateCategory(t finance.Transaction) error {
 	_, err := s.db.Exec(`
 		update transactions
 		set category = ?

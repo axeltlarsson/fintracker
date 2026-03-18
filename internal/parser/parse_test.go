@@ -1,15 +1,16 @@
-package main
+package parser
 
 import (
 	"strings"
 	"testing"
+	"fintracker/internal/finance"
 )
 
 func TestParseAmount(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    Öre
+		want    finance.Öre
 		wantErr bool
 	}{
 		{name: "simple positive", input: "100,00", want: 100_00},
@@ -31,7 +32,7 @@ func TestParseAmount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseAmount(tt.input)
+			got, err := ParseAmount(tt.input)
 
 			if tt.wantErr {
 				if err == nil {
@@ -54,7 +55,7 @@ func TestParseAmount(t *testing.T) {
 func TestParseTransaction(t *testing.T) {
 	input := "2006-01-15;-49,50;ICA Nära\n2026-01-16;1000,00;Lön\n"
 
-	txns, err := parseTransactions(strings.NewReader(input), "SEB")
+	txns, err := ParseTransactions(strings.NewReader(input), "SEB")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +66,7 @@ func TestParseTransaction(t *testing.T) {
 
 	// spot-check first transaction
 	if txns[0].Amount != -49_50 {
-		t.Errorf("txns[0].Amount = %d, want %d", txns[0].Amount, Öre(-49_50))
+		t.Errorf("txns[0].Amount = %d, want %d", txns[0].Amount, finance.Öre(-49_50))
 	}
 	if txns[0].Payee != "ICA Nära" {
 		t.Errorf("txns[0].Payee = %q, want %q", txns[0].Payee, "ICA Nära")
@@ -87,12 +88,47 @@ func FuzzParseAmount(f *testing.F) {
 	f.Add("abc")
 
 	f.Fuzz(func(t *testing.T, s string) {
-		öre, err := parseAmount(s)
+		öre, err := ParseAmount(s)
 		if err != nil {
 			return // errors are fine, we're looking for panics
 		}
 		// Property: if parsing succeded, String() should not panic
 		_ = öre.String()
+
+		// Property: result should be representable (not overflow-weird)
+		if öre > 1_000_000_000_00 || öre < -1_000_000_000_00 {
+			// not a bug per se but unexpected to have a billion
+			t.Logf("suprisingly large amount from %q: %v", s, öre)
+		}
+
 	})
 
+}
+
+func FuzzParseTransactions(f *testing.F) {
+	// seed with realistc CSV lines
+
+	f.Add("2026-01-15;-49,50;ICA Nära\n")
+	f.Add("2026-01-15;-49,50;ICA Nära\n2026-01-16;1000,00;Lön\n")
+	f.Add("")
+	f.Add(";;;;\n")
+	f.Add("not-a-date;not-an-amount;payee\n")
+	f.Add("2026-01-15;0;;\n")
+
+	f.Fuzz(func(t *testing.T, input string) {
+		txns, err := ParseTransactions(strings.NewReader(input), "test")
+		if err != nil {
+			return
+		}
+
+		// Propery: every parsed transaction should have non-zero date and account
+		for i, tx := range txns {
+			if tx.Date.IsZero() {
+				t.Errorf("txns[%d] has zero date from input %q", i, input)
+			}
+			if tx.Account != "test" {
+				t.Errorf("txns[%d].Account = %q, want %q", i, tx.Account, "test")
+			}
+		}
+	})
 }

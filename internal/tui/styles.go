@@ -1,6 +1,9 @@
-package main
+package tui
 
-import lipgloss "charm.land/lipgloss/v2"
+import (
+	lipgloss "charm.land/lipgloss/v2"
+	"fintracker/internal/finance"
+)
 
 var (
 	// colors
@@ -40,7 +43,7 @@ var (
 				Italic(true)
 )
 
-func amountStyle(amount Öre) lipgloss.Style {
+func amountStyle(amount finance.Öre) lipgloss.Style {
 	if amount >= 0 {
 		return lipgloss.NewStyle().Foreground(colorIncome)
 	}

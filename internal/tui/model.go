@@ -1,7 +1,6 @@
-package main
+package tui
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -14,16 +13,14 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
-)
 
-type importSpec struct {
-	path    string
-	account string
-}
+	"fintracker/internal/finance"
+	"fintracker/internal/store"
+)
 
 type screen int
 
-const title = "fintracker"
+const appTitle = "fintracker"
 const (
 	listScreen screen = iota
 	detailScreen
@@ -32,15 +29,15 @@ const (
 	categorySummaryScreen // TODO might not need it as is right now
 )
 
-type model struct {
+type Model struct {
 	// Data
-	transactions    []Transaction
-	totalBalance    Öre
-	accountSummary  map[string]Öre
-	categorySummary map[string]Öre
-	rules           []Rule
+	transactions    []finance.Transaction
+	totalBalance    finance.Öre
+	accountSummary  map[string]finance.Öre
+	categorySummary map[string]finance.Öre
+	rules           []finance.Rule
 	categories      []string
-	store           *Store
+	store           *store.Store
 
 	// UI components - each is a Bubble with its own state
 	list     list.Model
@@ -61,21 +58,21 @@ type model struct {
 	ready         bool // true once we've received the first WindowSizeMsg
 }
 
-func initialModelFromStore(store *Store, rules []Rule) (model, error) {
+func InitialModelFromStore(store *store.Store, rules []finance.Rule) (Model, error) {
 	txns, err := store.LoadTransactions()
 
 	if err != nil {
-		return model{}, err
+		return Model{}, err
 	}
 
 	if len(txns) == 0 {
-		return model{}, fmt.Errorf("no transaction found in database")
+		return Model{}, fmt.Errorf("no transaction found in database")
 	}
 
 	// Apply rules to any uncategorised transactions
-	if matched := categorize(txns, rules); matched > 0 {
+	if matched := finance.Categorize(txns, rules); matched > 0 {
 		if _, err := store.UpsertTransactions(txns); err != nil {
-			return model{}, fmt.Errorf("saving categorized transactions: %w", err)
+			return Model{}, fmt.Errorf("saving categorized transactions: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "categorized %d transactions from rules\n", matched)
 	}
@@ -83,7 +80,7 @@ func initialModelFromStore(store *Store, rules []Rule) (model, error) {
 	// Convert transactions to list items
 	items := make([]list.Item, len(txns))
 	for i, t := range txns {
-		items[i] = t
+		items[i] = TransactionItem{t}
 	}
 
 	// Create list
@@ -102,9 +99,9 @@ func initialModelFromStore(store *Store, rules []Rule) (model, error) {
 	keys := newKeyMap()
 	catKeys := newCategoryKeyMap()
 
-	return model{
+	return Model{
 		transactions:    txns,
-		totalBalance:    CalculateBalance(txns),
+		totalBalance:    finance.CalculateBalance(txns),
 		accountSummary:  buildAccountSummary(txns),
 		categorySummary: buildCategorySummary(txns),
 		rules:           rules,
@@ -118,7 +115,7 @@ func initialModelFromStore(store *Store, rules []Rule) (model, error) {
 		accounts:        collectAccounts(txns),
 	}, nil
 }
-func collectCategories(txns []Transaction, rules []Rule) []string {
+func collectCategories(txns []finance.Transaction, rules []finance.Rule) []string {
 	seen := make(map[string]bool)
 
 	for _, r := range rules {
@@ -139,7 +136,7 @@ func collectCategories(txns []Transaction, rules []Rule) []string {
 	return cats
 }
 
-func collectAccounts(txns []Transaction) []string {
+func collectAccounts(txns []finance.Transaction) []string {
 	seen := make(map[string]bool)
 	for _, t := range txns {
 		seen[t.Account] = true
@@ -152,8 +149,8 @@ func collectAccounts(txns []Transaction) []string {
 	return accs
 }
 
-func buildAccountSummary(txns []Transaction) map[string]Öre {
-	summary := make(map[string]Öre)
+func buildAccountSummary(txns []finance.Transaction) map[string]finance.Öre {
+	summary := make(map[string]finance.Öre)
 
 	for _, t := range txns {
 		summary[t.Account] += t.Amount
@@ -161,9 +158,10 @@ func buildAccountSummary(txns []Transaction) map[string]Öre {
 	return summary
 }
 
-func buildCategorySummary(txns []Transaction) map[string]Öre {
+func buildCategorySummary(txns []finance.Transaction) map[string]finance.Öre {
+
 	// amount per category
-	summary := make(map[string]Öre)
+	summary := make(map[string]finance.Öre)
 
 	for _, t := range txns {
 		c := t.Category
@@ -175,11 +173,11 @@ func buildCategorySummary(txns []Transaction) map[string]Öre {
 	return summary
 }
 
-func (m model) Init() tea.Cmd {
+func (m Model) Init() tea.Cmd {
 	return tea.RequestBackgroundColor
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -236,7 +234,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		// Don't intercept keys when the list is filtering
@@ -245,7 +243,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(msg, m.keys.Enter):
-			if item, ok := m.list.SelectedItem().(Transaction); ok {
+			if item, ok := m.list.SelectedItem().(TransactionItem); ok {
 				_ = item
 				m.selectedIndex = m.list.Index()
 				m.screen = detailScreen
@@ -276,24 +274,24 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 }
 
-func (m *model) refreshListItems() {
+func (m *Model) refreshListItems() {
 	var items []list.Item
 	for _, t := range m.transactions {
 		if m.filterAccount != "" && t.Account != m.filterAccount {
 			continue
 		}
-		items = append(items, t)
+		items = append(items, TransactionItem{t})
 	}
 	m.list.SetItems(items)
 
-	title := title
+	title := appTitle
 	if m.filterAccount != "" {
 		title += " — " + m.filterAccount
 	}
 	m.list.Title = title
 }
 
-func (m model) nextAccount() string {
+func (m Model) nextAccount() string {
 	if m.filterAccount == "" {
 		// currently showing all - switch to first account
 		if len(m.accounts) > 0 {
@@ -314,7 +312,7 @@ func (m model) nextAccount() string {
 	return ""
 }
 
-func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -336,7 +334,7 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.KeyPressMsg:
@@ -397,7 +395,7 @@ func contains(ss []string, s string) bool {
 	return false
 }
 
-func (m model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -409,62 +407,4 @@ func (m model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
-}
-
-func main() {
-	rulesPath := flag.String("rules", "", "path to categorization rules YAML")
-	dbPath := flag.String("db", "fintracker.db", "path to database")
-	flag.Parse()
-
-	store, err := NewStore(*dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer store.Close()
-
-	args := flag.Args()
-
-	// Import CSV:s if provided
-	if len(args) > 0 {
-		specs, err := parseArgs(args)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-
-		txns, err := loadTransactions(specs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-
-		inserted, err := store.UpsertTransactions(txns)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "imported %d new transactions\n", inserted)
-
-	}
-	var rules []Rule
-	if *rulesPath != "" {
-		rules, err = loadRules(*rulesPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	m, err := initialModelFromStore(store, rules)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
 }

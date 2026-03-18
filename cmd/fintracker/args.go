@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"fintracker/internal/tui"
 )
 
-func parseArgs(args []string) ([]importSpec, error) {
-	var specs []importSpec
+func parseArgs(args []string) ([]tui.ImportSpec, error) {
+	var specs []tui.ImportSpec
 
 	for _, arg := range args {
 		parts := strings.SplitN(arg, ":", 2)
@@ -23,9 +25,9 @@ func parseArgs(args []string) ([]importSpec, error) {
 			return nil, fmt.Errorf("file %q: %w", path, err)
 		}
 
-		specs = append(specs, importSpec{
-			path:    path,
-			account: account,
+		specs = append(specs, tui.ImportSpec{
+			Path:    path,
+			Account: account,
 		})
 
 	}

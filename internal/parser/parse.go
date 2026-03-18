@@ -1,4 +1,4 @@
-package main
+package parser
 
 import (
 	"encoding/csv"
@@ -7,13 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"fintracker/internal/finance"
 )
 
-func parseTransactions(r io.Reader, account string) ([]Transaction, error) {
+func ParseTransactions(r io.Reader, account string) ([]finance.Transaction, error) {
 	cr := csv.NewReader(r)
 	cr.Comma = ';'
 
-	var txns []Transaction
+	var txns []finance.Transaction
 
 	for {
 		record, err := cr.Read()
@@ -37,18 +39,18 @@ func parseTransactions(r io.Reader, account string) ([]Transaction, error) {
 	return txns, nil
 }
 
-func parseRow(fields []string, account string) (Transaction, error) {
+func parseRow(fields []string, account string) (finance.Transaction, error) {
 	date, err := time.Parse("2006-01-02", strings.TrimSpace(fields[0]))
 	if err != nil {
-		return Transaction{}, fmt.Errorf("bad date %q: %w", fields[0], err)
+		return finance.Transaction{}, fmt.Errorf("bad date %q: %w", fields[0], err)
 	}
 
-	amount, err := parseAmount(fields[1])
+	amount, err := ParseAmount(fields[1])
 	if err != nil {
-		return Transaction{}, fmt.Errorf("bad amount %q: %w", fields[1], err)
+		return finance.Transaction{}, fmt.Errorf("bad amount %q: %w", fields[1], err)
 	}
 
-	return Transaction{
+	return finance.Transaction{
 		Date:    date,
 		Amount:  amount,
 		Payee:   strings.TrimSpace(fields[2]),
@@ -56,7 +58,7 @@ func parseRow(fields []string, account string) (Transaction, error) {
 	}, nil
 }
 
-func parseAmount(s string) (Öre, error) {
+func ParseAmount(s string) (finance.Öre, error) {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, " ", "")
 
@@ -87,6 +89,6 @@ func parseAmount(s string) (Öre, error) {
 	if kronor < 0 {
 		total = kronor*100 - öre
 	}
-	return Öre(total), nil
+	return finance.Öre(total), nil
 
 }

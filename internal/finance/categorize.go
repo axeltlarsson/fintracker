@@ -1,4 +1,4 @@
-package main
+package finance
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ type Rule struct {
 	Category      string `yaml:"category"`
 }
 
-func loadRules(path string) ([]Rule, error) {
+func LoadRules(path string) ([]Rule, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading rules: %w", err)
@@ -27,7 +27,7 @@ func loadRules(path string) ([]Rule, error) {
 	return rules, nil
 }
 
-func categorize(txns []Transaction, rules []Rule) int {
+func Categorize(txns []Transaction, rules []Rule) int {
 
 	matched := 0
 	for i := range txns {

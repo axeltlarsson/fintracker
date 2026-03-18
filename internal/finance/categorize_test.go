@@ -1,4 +1,4 @@
-package main
+package finance
 
 import "testing"
 
@@ -14,7 +14,7 @@ func TestCategorize(t *testing.T) {
 		{Payee: "ica maxi", Category: ""},
 	}
 
-	matched := categorize(txns, rules)
+	matched := Categorize(txns, rules)
 
 	if matched != 3 {
 		t.Errorf("matched = %d, want 3", matched)
@@ -28,14 +28,14 @@ func TestCategorize(t *testing.T) {
 
 	// already categorised transactions should be skipped
 	txns[2].Category = "Underhållning"
-	matched = categorize(txns, rules)
+	matched = Categorize(txns, rules)
 	if matched != 0 {
 		t.Errorf("second pass matched = %d, want 0 (all already categorised)", matched)
 	}
 }
 
 func TestLoadRules(t *testing.T) {
-	rules, err := loadRules("testdata/rules.yaml")
+	rules, err := LoadRules("testdata/rules.yaml")
 	if err != nil {
 		t.Fatalf("loadRules: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestLoadRules(t *testing.T) {
 
 	// test missing file
 
-	_, err = loadRules("testdata/nonexistent.yaml")
+	_, err = LoadRules("testdata/nonexistent.yaml")
 	if err == nil {
 		t.Error("Expected error for missing file, got nil")
 	}

@@ -10,31 +10,35 @@ fintracker is a Bubble Tea v2 TUI for personal finance tracking across multiple 
 
 ```
 fintracker/
-├── CLAUDE.md          # tutor behavioral prompt (stable)
-├── PROGRESS.md        # this file (updated each session)
-├── flake.nix          # nix devShell
-├── go.mod
-├── go.sum
-├── main.go            # CLI flags, orchestration, program entry
-├── args.go            # CLI argument parsing (account:path format)
-├── load.go            # file loading, sorting transactions
-├── parse.go           # CSV parsing (semicolon-delimited Swedish bank format)
-├── transaction.go     # Transaction struct, Öre type, balance helpers
-├── categorize.go      # YAML rule loading, payee-contains matching
-├── store.go           # SQLite persistence (modernc.org/sqlite, pure Go)
-├── model.go           # Bubble Tea model, Init, Update, View
-├── keys.go            # key.Binding definitions, keyMap
-├── styles.go          # Lip Gloss style palette
-├── views.go           # view rendering functions
-├── transaction_test.go    # tests for Öre, CalculateBalance
-├── parse_test.go          # tests for parseAmount, parseTransactions
-├── store_test.go          # tests for Store (in-memory SQLite)
-├── categorize_test.go     # tests for categorize, loadRules
+├── cmd/fintracker/
+│   ├── main.go            # entry point, flag parsing, orchestration
+│   ├── args.go            # CLI argument parsing (account:path format)
+│   └── load.go            # file loading, calls parser
+├── internal/
+│   ├── finance/           # Transaction, Öre, Rule, Categorize
+│   │   ├── transaction.go
+│   │   ├── categorize.go
+│   │   ├── transaction_test.go
+│   │   └── categorize_test.go
+│   ├── parser/            # CSV parsing (io.Reader → []Transaction)
+│   │   ├── parse.go
+│   │   └── parse_test.go
+│   ├── store/             # SQLite persistence (modernc.org/sqlite)
+│   │   ├── store.go
+│   │   └── store_test.go
+│   └── tui/               # Bubble Tea model, views, keys, styles
+│       ├── model.go
+│       ├── views.go
+│       ├── keys.go
+│       ├── styles.go
+│       └── item.go        # TransactionItem wrapper for list.Item
 ├── testdata/
-│   ├── seb.csv
-│   └── rules.yaml
-└── fintracker.db      # runtime SQLite database
+│   └── seb.csv            # sample CSV for manual testing
+├── go.mod
+└── flake.nix
 ```
+
+Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → finance, store` · `store → finance` · `parser → finance` · `finance → (nothing)`
 
 ### Tech stack
 
@@ -89,7 +93,7 @@ fintracker/
 - [ ] Generics (mentioned, not deeply used)
 - [ ] iter package and range-over-function (mentioned, not used)
 - [x] Testing (table-driven, subtests, coverage, race detector)
-- [ ] Fuzz testing
+- [x] Fuzz testing
 - [ ] Goroutines, channels, select
 - [ ] context.Context
 - [ ] sync package (WaitGroup, Mutex, Once)
@@ -195,3 +199,13 @@ fintracker/
 **Date:** 2026-03-18
 **Covered:** Phase 8 (testing). Table-driven tests with subtests for parseAmount, Öre.String(), CalculateBalance, parseTransactions, categorize, loadRules, and Store (upsert round-trip with in-memory SQLite). Test helper with t.Helper()/t.Cleanup(). Coverage profiling (go test -cover, -coverprofile). Race detector (-race). Found and fixed a bug: parseAmount silently truncated >2 decimal digits, now returns an error. Learned fmt.Errorf verbs (%v, %q, %w) and error wrapping.
 **Next:** Phase 9 (fuzz testing) — fuzz parseAmount to discover more edge cases.
+
+### Session 2b — fuzz testing (Phase 9)
+**Date:** 2026-03-18
+**Covered:** Phase 9 (fuzz testing). Fuzz targets for parseAmount and parseTransactions using testing.F. Seed corpus design, property-based assertions (no panics, invariant checks), -fuzztime flag. ~1.6M inputs tested across both targets with no crashes. Learned how fuzz corpus entries become permanent regression tests.
+**Next:** Phase 10 (project structure & packages) or pick from roadmap.
+
+### Session 2c — project structure (Phase 10)
+**Date:** 2026-03-18
+**Covered:** Phase 10 (project structure). Split flat `package main` into `cmd/fintracker/` + `internal/{finance,parser,store,tui}`. Learned: `internal/` compiler enforcement, `cmd/` convention, `testdata/` per-package scope, Go file naming conventions (verb not actor), Go's procedural-with-interfaces paradigm. Created `TransactionItem` wrapper using struct embedding to satisfy `list.Item` across package boundaries. Dependency graph flows inward with `finance` as the leaf package. All tests pass across packages with `go test ./...`.
+**Next:** Phase 11 (concurrency) or pick from roadmap.
