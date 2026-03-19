@@ -15,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 
 	"fintracker/internal/finance"
+	"fintracker/internal/parser"
 	"fintracker/internal/store"
 )
 
@@ -29,6 +30,11 @@ const (
 	categorySummaryScreen // TODO might not need it as is right now
 )
 
+type ImportSpec struct {
+	Path    string
+	Account string
+}
+
 type Model struct {
 	// Data
 	transactions    []finance.Transaction
@@ -38,6 +44,11 @@ type Model struct {
 	rules           []finance.Rule
 	categories      []string
 	store           *store.Store
+
+	// Import state
+	importSpecs  []ImportSpec
+	importing    bool
+	importStatus string
 
 	// UI components - each is a Bubble with its own state
 	list     list.Model
@@ -58,23 +69,20 @@ type Model struct {
 	ready         bool // true once we've received the first WindowSizeMsg
 }
 
-func InitialModelFromStore(store *store.Store, rules []finance.Rule) (Model, error) {
+func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []ImportSpec) (Model, error) {
 	txns, err := store.LoadTransactions()
 
 	if err != nil {
 		return Model{}, err
 	}
 
-	if len(txns) == 0 {
-		return Model{}, fmt.Errorf("no transaction found in database")
-	}
-
 	// Apply rules to any uncategorised transactions
-	if matched := finance.Categorize(txns, rules); matched > 0 {
-		if _, err := store.UpsertTransactions(txns); err != nil {
-			return Model{}, fmt.Errorf("saving categorized transactions: %w", err)
+	if len(txns) > 0 {
+		if matched := finance.Categorize(txns, rules); matched > 0 {
+			if _, err := store.UpsertTransactions(txns); err != nil {
+				return Model{}, fmt.Errorf("saving categorized transactions: %w", err)
+			}
 		}
-		fmt.Fprintf(os.Stderr, "categorized %d transactions from rules\n", matched)
 	}
 
 	// Convert transactions to list items
@@ -86,9 +94,13 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule) (Model, err
 	// Create list
 	delegate := list.NewDefaultDelegate()
 	l := list.New(items, delegate, 0, 0) // size set on first WindowSizeMsg
-	l.Title = "fintracker"
+	l.Title = appTitle
 	l.SetShowStatusBar(true)
 	l.SetShowFilter(true)
+
+	if len(txns) == 0 && len(specs) > 0 {
+		l.NewStatusMessage("Importing transactions...")
+	}
 
 	// Category text input
 	ti := textinput.New()
@@ -107,6 +119,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule) (Model, err
 		rules:           rules,
 		categories:      collectCategories(txns, rules),
 		store:           store,
+		importSpecs:     specs,
 		list:            l,
 		catInput:        ti,
 		help:            help.New(),
@@ -174,7 +187,71 @@ func buildCategorySummary(txns []finance.Transaction) map[string]finance.Öre {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.RequestBackgroundColor
+	cmds := []tea.Cmd{tea.RequestBackgroundColor}
+	if len(m.importSpecs) > 0 {
+		cmds = append(cmds, func() tea.Msg {
+			return ImportStartMsg{FileCount: len(m.importSpecs)}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) importNextFile(index int, accumulated []finance.Transaction) tea.Cmd {
+	if index >= len(m.importSpecs) {
+		all := accumulated
+		s := m.store
+
+		return func() tea.Msg {
+			inserted, err := s.UpsertTransactions(all)
+			if err != nil {
+				return ImportErrMsg{Err: fmt.Errorf("storing transactions: %w", err)}
+			}
+			return ImportDoneMsg{Total: len(all), Inserted: inserted}
+		}
+	}
+	spec := m.importSpecs[index]
+
+	return func() tea.Msg {
+		f, err := os.Open(spec.Path)
+		if err != nil {
+			return ImportErrMsg{Err: fmt.Errorf("opening %s: %w", spec.Path, err)}
+		}
+		defer f.Close()
+
+		txns, err := parser.ParseTransactions(f, spec.Account)
+		if err != nil {
+			return ImportErrMsg{Err: fmt.Errorf("parsing %s: %w", spec.Path, err)}
+		}
+
+		return ImportProgressMsg{
+			FileIndex:    index,
+			Account:      spec.Account,
+			Count:        len(txns),
+			Transactions: append(accumulated, txns...),
+		}
+
+	}
+}
+
+// Import messages - sent from background tea.Cmd to Update()
+type ImportStartMsg struct {
+	FileCount int
+}
+
+type ImportProgressMsg struct {
+	FileIndex    int
+	Account      string
+	Count        int                   // transactions parsed from this file
+	Transactions []finance.Transaction // accumulated so far
+}
+
+type ImportDoneMsg struct {
+	Total    int // total txns imported
+	Inserted int // new rows inserted
+}
+
+type ImportErrMsg struct {
+	Err error
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -209,6 +286,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
 		m.help.SetWidth(msg.Width)
 
+		return m, nil
+
+	case ImportStartMsg:
+		m.importing = true
+		m.importStatus = fmt.Sprintf("Importing 0/%d files...", msg.FileCount)
+		m.list.NewStatusMessage(m.importStatus)
+		// kick off the first file
+		return m, m.importNextFile(0, nil)
+
+	case ImportProgressMsg:
+		m.importStatus = fmt.Sprintf("Importing %d/%d files... (%s: %d transactions)",
+			msg.FileIndex+1, len(m.importSpecs), msg.Account, msg.Count)
+		m.list.NewStatusMessage(m.importStatus)
+		// kick off next file
+		return m, m.importNextFile(msg.FileIndex+1, msg.Transactions)
+
+	case ImportDoneMsg:
+		// reload transactions from store to include newly import ones
+		txns, err := m.store.LoadTransactions()
+		if err != nil {
+			return m, tea.Quit
+		}
+		// re-apply rules
+		if matched := finance.Categorize(txns, m.rules); matched > 0 {
+			m.store.UpsertTransactions(txns)
+		}
+		m.transactions = txns
+		m.totalBalance = finance.CalculateBalance(txns)
+		m.accountSummary = buildAccountSummary(txns)
+		m.categorySummary = buildCategorySummary(txns)
+		m.categories = collectCategories(txns, m.rules)
+		m.accounts = collectAccounts(txns)
+		m.refreshListItems()
+
+		// set status message on the list
+		m.list.NewStatusMessage(
+			fmt.Sprintf("Imported %d transactions (%d new)", msg.Total, msg.Inserted))
+		return m, nil
+
+	case ImportErrMsg:
+		m.list.NewStatusMessage(fmt.Sprintf("Import error: %v", msg.Err))
 		return m, nil
 
 	case tea.KeyPressMsg:
