@@ -36,13 +36,13 @@ func TestUpsertAndLoad(t *testing.T) {
 		},
 	}
 
-	inserted, err := store.UpsertTransactions(txns)
+	upserted, err := store.UpsertTransactions(txns)
 
 	if err != nil {
 		t.Fatalf("UpsertTransactions: %v", err)
 	}
-	if inserted != 2 {
-		t.Fatalf("inserted = %d, want 2", inserted)
+	if upserted != 2 {
+		t.Fatalf("upserted = %d, want 2", upserted)
 	}
 
 	// Round-trip - load it back
@@ -63,22 +63,22 @@ func TestUpsertAndLoad(t *testing.T) {
 
 	// test upsert - inserting same transaction again
 
-	inserted, err = store.UpsertTransactions(txns[:1])
+	upserted, err = store.UpsertTransactions(txns[:1])
 	if err != nil {
 		t.Fatalf("UpsertTransactions transaction 0: %v", err)
 	}
-	if inserted != 1 {
-		t.Errorf("inserted = %d, want 1", inserted)
+	if upserted != 0 {
+		t.Errorf("upserted = %d, want 0", upserted)
 	}
 
 	// modify a transaction and upsert
 	txns[0].Category = "Groceries"
-	inserted, err = store.UpsertTransactions(txns[:1])
+	upserted, err = store.UpsertTransactions(txns[:1])
 	if err != nil {
 		t.Fatalf("UpsertTransactions with changed data: %v", err)
 	}
-	if inserted != 1 {
-		t.Fatalf("inserted = %d, want 1", inserted)
+	if upserted != 1 {
+		t.Fatalf("upserted = %d, want 1", upserted)
 	}
 	// load the transaction and verify correct data stored
 
@@ -96,12 +96,12 @@ func TestUpsertAndLoad(t *testing.T) {
 
 	// update category of existing and upsert
 	txns[0].Category = "livsmedel"
-	inserted, err = store.UpsertTransactions(txns[:1])
+	upserted, err = store.UpsertTransactions(txns[:1])
 	if err != nil {
 		t.Fatalf("UpsertTransactions with changed data: %v", err)
 	}
-	if inserted != 1 {
-		t.Fatalf("inserted = %d, want 1", inserted)
+	if upserted != 1 {
+		t.Fatalf("upserted = %d, want 1", upserted)
 	}
 	// load the transaction and verify correct data stored
 
@@ -119,12 +119,12 @@ func TestUpsertAndLoad(t *testing.T) {
 
 	// for transactions with existing category, setting it to empty string should preserve old category
 	txns[0].Category = ""
-	inserted, err = store.UpsertTransactions(txns[:1])
+	upserted, err = store.UpsertTransactions(txns[:1])
 	if err != nil {
 		t.Fatalf("UpsertTransactions with changed data: %v", err)
 	}
-	if inserted != 1 {
-		t.Fatalf("inserted = %d, want 1", inserted)
+	if upserted != 1 {
+		t.Fatalf("upserted = %d, want 1", upserted)
 	}
 	// load the transaction and verify correct data stored
 

@@ -50,8 +50,8 @@ func NewStore(path string) (*Store, error) {
 }
 
 // UpsertTransactions upserts transactions into the Store
-// The number of inserted rows is returned, 0 in case of error
-func (s *Store) UpsertTransactions(txns []finance.Transaction) (inserted int, err error) {
+// The number of upserted rows is returned, 0 in case of error
+func (s *Store) UpsertTransactions(txns []finance.Transaction) (upserted int, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("beginning transaction: %w", err)
@@ -68,6 +68,7 @@ func (s *Store) UpsertTransactions(txns []finance.Transaction) (inserted int, er
 			when transactions.category != '' then transactions.category
 			else ''
 		end
+		where excluded.category != transactions.category
 	`)
 
 	if err != nil {
@@ -84,12 +85,12 @@ func (s *Store) UpsertTransactions(txns []finance.Transaction) (inserted int, er
 			t.Category,
 		)
 		if err != nil {
-			return inserted, fmt.Errorf("inserting %s/%s: %w", t.Date.Format("2006-01-02"), t.Payee, err)
+			return upserted, fmt.Errorf("inserting %s/%s: %w", t.Date.Format("2006-01-02"), t.Payee, err)
 		}
 
 		n, _ := result.RowsAffected()
 		if n > 0 {
-			inserted++
+			upserted++
 		}
 	}
 
@@ -97,7 +98,7 @@ func (s *Store) UpsertTransactions(txns []finance.Transaction) (inserted int, er
 		return 0, fmt.Errorf("comitting: %w", err)
 	}
 
-	return inserted, nil
+	return upserted, nil
 }
 
 // Load transactions from the Store

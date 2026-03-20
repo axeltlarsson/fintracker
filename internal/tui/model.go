@@ -206,7 +206,6 @@ func (m Model) importAllCmd() tea.Cmd {
 		if err != nil {
 			return ImportErrMsg{Err: err}
 		}
-		// TODO: inserted is actually "touched" - not necessarily actually inserted new ones
 		inserted, err := s.UpsertTransactions(txns)
 		if err != nil {
 			return ImportErrMsg{Err: fmt.Errorf("storing transactions: %w", err)}
