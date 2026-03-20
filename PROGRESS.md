@@ -1,6 +1,6 @@
 # PROGRESS.md — fintracker learning progress
 
-> This file is a living document. Claude suggests updates at the end of each session; Axel applies them manually.
+> This file is a living document. Claude suggests updates at the end of each session; Axel approves them after which Claude applies it.
 
 ## Project state
 
@@ -94,9 +94,12 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 - [ ] iter package and range-over-function (mentioned, not used)
 - [x] Testing (table-driven, subtests, coverage, race detector)
 - [x] Fuzz testing
-- [ ] Goroutines, channels, select
-- [ ] context.Context
+- [x] Goroutines (via errgroup.Go, tea.Batch)
+- [x] Channels (buffered, directional types chan<-/<-chan, close, range-over-channel)
+- [ ] select
+- [x] context.Context (errgroup.WithContext, context.Background — not yet used for cancellation)
 - [ ] sync package (WaitGroup, Mutex, Once)
+- [x] errgroup (golang.org/x/sync/errgroup)
 - [ ] net/http (client and server)
 - [ ] JSON encoding/decoding
 - [ ] Custom error types (errors.As, errors.Is)
@@ -209,3 +212,9 @@ fintracker/
 **Date:** 2026-03-18
 **Covered:** Phase 10 (project structure). Split flat `package main` into `cmd/fintracker/` + `internal/{finance,parser,store,tui}`. Learned: `internal/` compiler enforcement, `cmd/` convention, `testdata/` per-package scope, Go file naming conventions (verb not actor), Go's procedural-with-interfaces paradigm. Created `TransactionItem` wrapper using struct embedding to satisfy `list.Item` across package boundaries. Dependency graph flows inward with `finance` as the leaf package. All tests pass across packages with `go test ./...`.
 **Next:** Phase 11 (concurrency) or pick from roadmap.
+
+### Session 3 — concurrency with errgroup (Phase 11, part 1)
+**Date:** 2026-03-20
+**Covered:** Phase 11 (concurrency), first part. Replaced sequential file-by-file import chain with parallel parsing using `errgroup`. Created `internal/tui/import.go` with `parseAllFiles` using index-partitioned results (no mutex needed). Added buffered progress channel (`chan ImportFileProgress`) with directional types. Implemented Bubble Tea's recursive Cmd pattern for progress reporting: `listenForProgress` reads one message, carries the `<-chan` forward in the `ImportProgressMsg`, `Update` re-subscribes. Used `tea.Batch` to run import + progress listener concurrently. Fixed goroutine leak with `defer close(progress)` on error paths. Discussed why Bubble Tea v2 has no Elm-style `Sub` — commands are the only abstraction, subscriptions are manual re-issue.
+**Concepts taught:** errgroup pattern, buffered vs unbuffered channels, channel direction types, goroutine leak prevention, recursive Cmd as subscription, `tea.Batch` for concurrent commands, closure capture of Model fields for goroutine safety.
+**Next:** Continue Phase 11 — test `parseAllFiles`, `g.SetLimit`, `select`, context cancellation, or `sync` primitives.

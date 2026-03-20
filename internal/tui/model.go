@@ -1,8 +1,8 @@
 package tui
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -15,7 +15,6 @@ import (
 	"charm.land/bubbles/v2/viewport"
 
 	"fintracker/internal/finance"
-	"fintracker/internal/parser"
 	"fintracker/internal/store"
 )
 
@@ -196,40 +195,45 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m Model) importNextFile(index int, accumulated []finance.Transaction) tea.Cmd {
-	if index >= len(m.importSpecs) {
-		all := accumulated
-		s := m.store
+func (m Model) importAllCmd() tea.Cmd {
+	specs := m.importSpecs
+	s := m.store
+	progress := make(chan ImportFileProgress, len(specs)) // buffered channel
 
-		return func() tea.Msg {
-			inserted, err := s.UpsertTransactions(all)
-			if err != nil {
-				return ImportErrMsg{Err: fmt.Errorf("storing transactions: %w", err)}
-			}
-			return ImportDoneMsg{Total: len(all), Inserted: inserted}
+	doImportCmd := func() tea.Msg {
+		defer close(progress)
+		txns, err := parseAllFiles(context.Background(), specs, progress)
+		if err != nil {
+			return ImportErrMsg{Err: err}
 		}
+		// TODO: inserted is actually "touched" - not necessarily actually inserted new ones
+		inserted, err := s.UpsertTransactions(txns)
+		if err != nil {
+			return ImportErrMsg{Err: fmt.Errorf("storing transactions: %w", err)}
+		}
+		return ImportDoneMsg{Total: len(txns), Inserted: inserted}
 	}
-	spec := m.importSpecs[index]
 
+	listenProgressCmd := listenForProgress(progress)
+
+	return tea.Batch(doImportCmd, listenProgressCmd)
+
+}
+
+// returns a Cmd that reads ONE msg from the channel
+// When update receives the msg, it re-calls this to get the next one
+func listenForProgress(progress <-chan ImportFileProgress) tea.Cmd {
 	return func() tea.Msg {
-		f, err := os.Open(spec.Path)
-		if err != nil {
-			return ImportErrMsg{Err: fmt.Errorf("opening %s: %w", spec.Path, err)}
-		}
-		defer f.Close()
-
-		txns, err := parser.ParseTransactions(f, spec.Account)
-		if err != nil {
-			return ImportErrMsg{Err: fmt.Errorf("parsing %s: %w", spec.Path, err)}
+		msg, ok := <-progress
+		if !ok {
+			return nil // channel closed, no more progress
 		}
 
 		return ImportProgressMsg{
-			FileIndex:    index,
-			Account:      spec.Account,
-			Count:        len(txns),
-			Transactions: append(accumulated, txns...),
+			Account:  msg.Account,
+			Count:    msg.Count,
+			Progress: progress, // carry the channel forward
 		}
-
 	}
 }
 
@@ -239,12 +243,10 @@ type ImportStartMsg struct {
 }
 
 type ImportProgressMsg struct {
-	FileIndex    int
-	Account      string
-	Count        int                   // transactions parsed from this file
-	Transactions []finance.Transaction // accumulated so far
+	Account  string
+	Count    int
+	Progress <-chan ImportFileProgress
 }
-
 type ImportDoneMsg struct {
 	Total    int // total txns imported
 	Inserted int // new rows inserted
@@ -290,17 +292,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ImportStartMsg:
 		m.importing = true
-		m.importStatus = fmt.Sprintf("Importing 0/%d files...", msg.FileCount)
+		m.importStatus = "Importing files..."
 		m.list.NewStatusMessage(m.importStatus)
 		// kick off the first file
-		return m, m.importNextFile(0, nil)
+		return m, m.importAllCmd()
 
 	case ImportProgressMsg:
-		m.importStatus = fmt.Sprintf("Importing %d/%d files... (%s: %d transactions)",
-			msg.FileIndex+1, len(m.importSpecs), msg.Account, msg.Count)
+		m.importStatus = fmt.Sprintf("Parsed %s: %d transactions", msg.Account, msg.Count)
 		m.list.NewStatusMessage(m.importStatus)
-		// kick off next file
-		return m, m.importNextFile(msg.FileIndex+1, msg.Transactions)
+		// re-subscribe for next progress update
+		return m, listenForProgress(msg.Progress)
 
 	case ImportDoneMsg:
 		// reload transactions from store to include newly import ones
