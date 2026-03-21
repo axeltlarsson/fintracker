@@ -26,25 +26,24 @@ func (m Model) View() tea.View {
 	case listScreen:
 		content = m.list.View()
 	case detailScreen:
-		header := titleStyle.Render("fintracker — detail")
+		header := m.styles.title.Render("fintracker — detail")
 		body := m.viewport.View()
-		footer := helpStyle.Render("c categorise • ↑/↓ scroll • esc back")
+		footer := m.styles.help.Render("c categorise • ↑/↓ scroll • esc back")
 		content = header + "\n" + body + "\n" + footer
 	case summaryScreen:
-		header := titleStyle.Render("fintracker — summary")
+		header := m.styles.title.Render("fintracker — summary")
 		body := m.viewport.View()
-		footer := helpStyle.Render("↑/↓ scroll • esc back")
+		footer := m.styles.help.Render("↑/↓ scroll • esc back")
 		content = header + "\n" + body + "\n" + footer
 
 	case categoryScreen:
 		t := m.transactions[m.selectedIndex]
-		header := titleStyle.Render(fmt.Sprintf("Categorize: %s", t.Payee))
-		prompt := lipgloss.NewStyle().PaddingLeft(2).Render("Category: ")
+		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", t.Payee))
+		prompt := m.styles.prompt.Render("Category: ")
 		input := m.catInput.View()
 
-		hint := helpStyle.Render(m.help.View(m.catKeys))
-		existing := lipgloss.NewStyle().
-			Foreground(colorMuted).PaddingLeft(2).MarginTop(1).
+		hint := m.styles.help.Render(m.help.View(m.catKeys))
+		existing := m.styles.muted.PaddingLeft(2).MarginTop(1).
 			Render("Existing: " + strings.Join(m.categories, ", "))
 
 		content = header + "\n" + prompt + input + "\n" + existing + "\n\n" + hint
@@ -59,38 +58,30 @@ func (m Model) View() tea.View {
 func (m Model) renderDetail() string {
 	t := m.transactions[m.selectedIndex]
 
-	labelStyle := lipgloss.NewStyle().
-		Width(14).
-		Foreground(colorMuted).
-		PaddingLeft(2)
-
-	valueStyle := lipgloss.NewStyle().Bold(true)
-
 	var b strings.Builder
 	row := func(label, value string) {
-		b.WriteString(labelStyle.Render(label))
-		b.WriteString(valueStyle.Render(value))
+		b.WriteString(m.styles.label.Render(label))
+		b.WriteString(m.styles.value.Render(value))
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
 	row("Date", t.Date.Format("2006-01-02 (Monday)"))
 	row("Payee", t.Payee)
-	row("Amount", amountStyle(t.Amount).Render(t.Amount.String()))
+	row("Amount", m.styles.amountStyle(t.Amount).Render(t.Amount.String()))
 	row("Account", t.Account)
 
 	if t.Category != "" {
-		row("Category", categoryStyle.Render(t.Category))
+		row("Category", m.styles.category.Render(t.Category))
 
 	} else {
-		row("Category", uncategorizedStyle.Render(uncategorized))
+		row("Category", m.styles.uncategorized.Render(uncategorized))
 
 	}
 	b.WriteString("\n")
 
 	// Show other transactions from the same payee
-	b.WriteString(lipgloss.NewStyle().
-		Bold(true).PaddingLeft(2).MarginTop(1).Render("Other transactions from " + t.Payee))
+	b.WriteString(m.styles.sectionTitle.MarginTop(1).Render("Other transactions from " + t.Payee))
 	b.WriteString("\n\n")
 
 	count := 0
@@ -98,7 +89,7 @@ func (m Model) renderDetail() string {
 		if other.Payee == t.Payee && other.Date != t.Date {
 			fmt.Fprintf(&b, " %s %s\n",
 				other.Date.Format("2006-01-02"),
-				amountStyle(other.Amount).Render(other.Amount.String()),
+				m.styles.amountStyle(other.Amount).Render(other.Amount.String()),
 			)
 			count++
 			if count >= 10 {
@@ -110,8 +101,7 @@ func (m Model) renderDetail() string {
 	}
 
 	if count == 0 {
-		b.WriteString(lipgloss.NewStyle().
-			Padding(2).Foreground(colorMuted).Render("No other transactions"))
+		b.WriteString(m.styles.muted.Render("No other transactions"))
 		b.WriteString("\n")
 	}
 
@@ -123,27 +113,24 @@ func (m Model) renderSummary() string {
 	var b strings.Builder
 
 	// Accounts table
-	b.WriteString(lipgloss.NewStyle().
-		Bold(true).
-		PaddingLeft(2).
-		Render("Accounts"))
+	b.WriteString(m.styles.sectionTitle.Render("Accounts"))
 	b.WriteString("\n\n")
 
 	var accountRows [][]string
 	for _, acc := range sortedKeys(m.accountSummary) {
 		amount := m.accountSummary[acc]
-		accountRows = append(accountRows, []string{acc, amount.String()})
+		accountRows = append(accountRows, []string{acc, m.styles.amountStyle(amount).Render(amount.String())})
 	}
 
 	at := table.New().
 		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorMuted)).
+		BorderStyle(m.styles.tableBorder).
 		Headers("Account", "Balance").
 		Rows(accountRows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
-			s := lipgloss.NewStyle().PaddingRight(3)
+			s := m.styles.tableCell
 			if row == table.HeaderRow {
-				return s.Bold(true).Foreground(colorPrimary)
+				return m.styles.tableHeader
 			}
 			if col == 1 {
 				return s.Align(lipgloss.Right)
@@ -154,29 +141,26 @@ func (m Model) renderSummary() string {
 	b.WriteString("\n\n")
 
 	// Category table
-	b.WriteString(lipgloss.NewStyle().
-		Bold(true).
-		PaddingLeft(2).
-		Render("Categories"))
+	b.WriteString(m.styles.sectionTitle.Render("Categories"))
 	b.WriteString("\n\n")
 
 	var categoryRows [][]string
 	for _, acc := range sortedKeys(m.categorySummary) {
 		amount := m.categorySummary[acc]
-		categoryRows = append(categoryRows, []string{acc, amount.String()})
+		categoryRows = append(categoryRows, []string{acc, m.styles.amountStyle(amount).Render(amount.String())})
 	}
 
 	// add last row with total
-	categoryRows = append(categoryRows, []string{"Total", amountStyle(m.totalBalance).Render(m.totalBalance.String())})
+	categoryRows = append(categoryRows, []string{"Total", m.styles.amountStyle(m.totalBalance).Render(m.totalBalance.String())})
 	ct := table.New().
 		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorMuted)).
+		BorderStyle(m.styles.tableBorder).
 		Headers("Category", "Balance").
 		Rows(categoryRows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
-			s := lipgloss.NewStyle().PaddingRight(3)
+			s := m.styles.tableCell
 			if row == table.HeaderRow {
-				s = s.Bold(true).Foreground(colorPrimary)
+				s = m.styles.tableHeader
 			}
 			if col == 1 && row != table.HeaderRow {
 				s = s.Align(lipgloss.Right)
@@ -189,7 +173,7 @@ func (m Model) renderSummary() string {
 		})
 	b.WriteString(ct.Render())
 
-	b.WriteString(helpStyle.Render("esc back • q quit"))
+	b.WriteString(m.styles.help.Render("esc back • q quit"))
 
 	return b.String()
 }
@@ -205,7 +189,7 @@ func sortedKeys(m map[string]finance.Öre) []string {
 
 func (m Model) viewCategorySummaryScreen() tea.View {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Categories"))
+	b.WriteString(m.styles.title.Render("Categories"))
 
 	keys := make([]string, 0, len(m.categorySummary))
 	for k := range m.categorySummary {

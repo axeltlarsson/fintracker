@@ -66,6 +66,10 @@ type Model struct {
 	width         int
 	height        int
 	ready         bool // true once we've received the first WindowSizeMsg
+
+	// Theming
+	theme  Theme
+	styles styles
 }
 
 func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []ImportSpec) (Model, error) {
@@ -110,6 +114,9 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	keys := newKeyMap()
 	catKeys := newCategoryKeyMap()
 
+	theme := RoséPineMain // default to dark
+	st := newStyles(theme)
+
 	return Model{
 		transactions:    txns,
 		totalBalance:    finance.CalculateBalance(txns),
@@ -125,6 +132,8 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		keys:            keys,
 		catKeys:         catKeys,
 		accounts:        collectAccounts(txns),
+		theme:           theme,
+		styles:          st,
 	}, nil
 }
 func collectCategories(txns []finance.Transaction, rules []finance.Rule) []string {
@@ -262,6 +271,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.BackgroundColorMsg:
 		m.isDark = msg.IsDark()
+		if m.isDark {
+			m.theme = RoséPineMain
+		} else {
+			m.theme = RoséPineDawn
+		}
+		m.styles = newStyles(m.theme)
+
+		// Bubbles components have their own dark/light styles
 		m.list.Styles = list.DefaultStyles(m.isDark)
 		delegate := list.NewDefaultDelegate()
 		delegate.Styles = list.NewDefaultItemStyles(m.isDark)
