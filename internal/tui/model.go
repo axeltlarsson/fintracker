@@ -79,6 +79,9 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		return Model{}, err
 	}
 
+	theme := RoséPineMain // default to dark
+	st := newStyles(theme)
+
 	// Apply rules to any uncategorised transactions
 	if len(txns) > 0 {
 		if matched := finance.Categorize(txns, rules); matched > 0 {
@@ -96,7 +99,9 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 
 	// Create list
 	delegate := list.NewDefaultDelegate()
+	delegate.Styles = newItemStyles(theme)
 	l := list.New(items, delegate, 0, 0) // size set on first WindowSizeMsg
+	l.Styles = newListStyles(theme)
 	l.Title = appTitle
 	l.SetShowStatusBar(true)
 	l.SetShowFilter(true)
@@ -114,8 +119,8 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	keys := newKeyMap()
 	catKeys := newCategoryKeyMap()
 
-	theme := RoséPineMain // default to dark
-	st := newStyles(theme)
+	help := help.New()
+	help.Styles = newHelpStyles(theme)
 
 	return Model{
 		transactions:    txns,
@@ -128,7 +133,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		importSpecs:     specs,
 		list:            l,
 		catInput:        ti,
-		help:            help.New(),
+		help:            help,
 		keys:            keys,
 		catKeys:         catKeys,
 		accounts:        collectAccounts(txns),
@@ -277,13 +282,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-
-		// Bubbles components have their own dark/light styles
-		m.list.Styles = list.DefaultStyles(m.isDark)
+		m.list.Styles = newListStyles(m.theme)
 		delegate := list.NewDefaultDelegate()
-		delegate.Styles = list.NewDefaultItemStyles(m.isDark)
+		delegate.Styles = newItemStyles(m.theme)
 		m.list.SetDelegate(delegate)
-		m.help.Styles = help.DefaultStyles(m.isDark)
+		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:

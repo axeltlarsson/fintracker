@@ -3,6 +3,9 @@ package tui
 import (
 	lipgloss "charm.land/lipgloss/v2"
 	"fintracker/internal/finance"
+
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/list"
 )
 
 type styles struct {
@@ -92,4 +95,75 @@ func (s styles) amountStyle(amount finance.Öre) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(s.theme.Love).Background(s.theme.Surface)
 }
 
+// styles for Bubbles list
+func newListStyles(t Theme) list.Styles {
 
+	s := list.Styles{}
+
+	s.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 2)
+	s.Title = lipgloss.NewStyle().
+		Background(t.Iris).
+		Foreground(t.Base).
+		Padding(0, 1)
+
+	s.Spinner = lipgloss.NewStyle().Foreground(t.Subtle)
+	s.StatusBar = lipgloss.NewStyle().
+		Foreground(t.Subtle).
+		Padding(0, 0, 1, 2)
+	s.StatusEmpty = lipgloss.NewStyle().Foreground(t.Muted)
+	s.StatusBarActiveFilter = lipgloss.NewStyle().Foreground(t.Text)
+	s.StatusBarFilterCount = lipgloss.NewStyle().Foreground(t.Muted)
+	s.NoItems = lipgloss.NewStyle().Foreground(t.Muted)
+	s.PaginationStyle = lipgloss.NewStyle().PaddingLeft(2)
+	s.HelpStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2)
+	s.ActivePaginationDot = lipgloss.NewStyle().
+		Foreground(t.Subtle).SetString("•")
+	s.InactivePaginationDot = lipgloss.NewStyle().
+		Foreground(t.Muted).SetString("•")
+	s.DividerDot = lipgloss.NewStyle().
+		Foreground(t.Muted).SetString(" • ")
+	s.DefaultFilterCharacterMatch = lipgloss.NewStyle().Underline(true)
+
+	return s
+
+}
+
+func newItemStyles(t Theme) list.DefaultItemStyles {
+	s := list.DefaultItemStyles{}
+
+	s.NormalTitle = lipgloss.NewStyle().
+		Foreground(t.Text).
+		Padding(0, 0, 0, 2)
+	s.NormalDesc = s.NormalTitle.
+		Foreground(t.Subtle)
+
+	s.SelectedTitle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(t.Iris).
+		Foreground(t.Iris).
+		Padding(0, 0, 0, 1)
+	s.SelectedDesc = s.SelectedTitle.
+		Foreground(t.Subtle)
+
+	s.DimmedTitle = lipgloss.NewStyle().
+		Foreground(t.Muted).
+		Padding(0, 0, 0, 2)
+	s.DimmedDesc = s.DimmedTitle.
+		Foreground(t.HighlightHigh)
+
+	s.FilterMatch = lipgloss.NewStyle().Underline(true)
+
+	return s
+}
+
+func newHelpStyles(t Theme) help.Styles {
+	return help.Styles{
+		Ellipsis:       lipgloss.NewStyle().Foreground(t.Muted),
+		ShortKey:       lipgloss.NewStyle().Foreground(t.Subtle),
+		ShortDesc:      lipgloss.NewStyle().Foreground(t.Muted),
+		ShortSeparator: lipgloss.NewStyle().Foreground(t.Muted),
+		FullKey:        lipgloss.NewStyle().Foreground(t.Subtle),
+		FullDesc:       lipgloss.NewStyle().Foreground(t.Muted),
+		FullSeparator:  lipgloss.NewStyle().Foreground(t.Muted),
+	}
+}
