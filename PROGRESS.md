@@ -96,8 +96,8 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 - [x] Fuzz testing
 - [x] Goroutines (via errgroup.Go, tea.Batch)
 - [x] Channels (buffered, directional types chan<-/<-chan, close, range-over-channel)
-- [ ] select
-- [x] context.Context (errgroup.WithContext, context.Background — not yet used for cancellation)
+- [x] select (cancellable channel send with ctx.Done())
+- [x] context.Context (errgroup.WithContext, context.Background, cancellation via ctx.Done())
 - [ ] sync package (WaitGroup, Mutex, Once)
 - [x] errgroup (golang.org/x/sync/errgroup)
 - [ ] net/http (client and server)
@@ -218,3 +218,9 @@ fintracker/
 **Covered:** Phase 11 (concurrency), first part. Replaced sequential file-by-file import chain with parallel parsing using `errgroup`. Created `internal/tui/import.go` with `parseAllFiles` using index-partitioned results (no mutex needed). Added buffered progress channel (`chan ImportFileProgress`) with directional types. Implemented Bubble Tea's recursive Cmd pattern for progress reporting: `listenForProgress` reads one message, carries the `<-chan` forward in the `ImportProgressMsg`, `Update` re-subscribes. Used `tea.Batch` to run import + progress listener concurrently. Fixed goroutine leak with `defer close(progress)` on error paths. Discussed why Bubble Tea v2 has no Elm-style `Sub` — commands are the only abstraction, subscriptions are manual re-issue.
 **Concepts taught:** errgroup pattern, buffered vs unbuffered channels, channel direction types, goroutine leak prevention, recursive Cmd as subscription, `tea.Batch` for concurrent commands, closure capture of Model fields for goroutine safety.
 **Next:** Continue Phase 11 — test `parseAllFiles`, `g.SetLimit`, `select`, context cancellation, or `sync` primitives.
+
+### Session 4 — testing concurrent code, select (Phase 11, part 2)
+**Date:** 2026-03-21
+**Covered:** Tested `parseAllFiles` — happy path (2 files, parallel), empty specs, and bad file path. The bad-path test exposed a real goroutine leak: successful goroutine blocked on unbuffered progress channel send while errgroup waited for all goroutines. Fixed with `select`/`ctx.Done()` pattern — cancellable channel operations. Full suite passes with `-race`.
+**Concepts taught:** `select` statement for multiplexing channel operations, `ctx.Done()` for cancellation-aware sends, testing concurrent code to find real bugs, goroutine leak detection via test timeouts.
+**Next:** Phase 12 (Rosé Pine theme) or pick from roadmap.

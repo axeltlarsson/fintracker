@@ -4,7 +4,8 @@
       "Bash(go doc:*)",
       "Bash(go test:*)",
       "Bash(ls:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(go build:*)"
     ]
   },
   "outputStyle": "Learning"

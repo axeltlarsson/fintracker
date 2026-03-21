@@ -39,10 +39,14 @@ func parseAllFiles(ctx context.Context, specs []ImportSpec, progress chan<- Impo
 
 			results[i] = txns
 
-			// signal progress
-			progress <- ImportFileProgress{
+			// signal progress (or bail if context cancelled)
+			select {
+			case progress <- ImportFileProgress{
 				Account: spec.Account,
 				Count:   len(txns),
+			}:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 			return nil
 		})
