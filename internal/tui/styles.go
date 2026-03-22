@@ -5,7 +5,8 @@ import (
 	"fintracker/internal/finance"
 
 	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/list"
+	// "charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/table"
 )
 
 type styles struct {
@@ -24,6 +25,7 @@ type styles struct {
 	tableCell     lipgloss.Style
 	prompt        lipgloss.Style
 	value         lipgloss.Style
+	warning       lipgloss.Style
 }
 
 func newStyles(t Theme) styles {
@@ -32,7 +34,7 @@ func newStyles(t Theme) styles {
 
 		title: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(t.Iris).
+			Foreground(t.Rose).
 			MarginBottom(1).
 			PaddingLeft(2),
 
@@ -46,7 +48,8 @@ func newStyles(t Theme) styles {
 			Bold(true),
 
 		selectedRow: lipgloss.NewStyle().
-			Background(t.Surface).
+			Background(t.HighlightLow).
+			Foreground(t.Gold).
 			Bold(true),
 
 		category: lipgloss.NewStyle().
@@ -85,18 +88,42 @@ func newStyles(t Theme) styles {
 
 		value: lipgloss.NewStyle().
 			Bold(true),
+
+		warning: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(t.Love),
 	}
 }
 
 func (s styles) amountStyle(amount finance.Öre) lipgloss.Style {
 	if amount >= 0 {
-		return lipgloss.NewStyle().Foreground(s.theme.Pine).Background(s.theme.Surface)
+		return lipgloss.NewStyle().Foreground(s.theme.Pine)
 	}
-	return lipgloss.NewStyle().Foreground(s.theme.Love).Background(s.theme.Surface)
+	return lipgloss.NewStyle().Foreground(s.theme.Love)
+}
+
+func newHelpStyles(t Theme) help.Styles {
+	return help.Styles{
+		Ellipsis:       lipgloss.NewStyle().Foreground(t.Muted),
+		ShortKey:       lipgloss.NewStyle().Foreground(t.Subtle),
+		ShortDesc:      lipgloss.NewStyle().Foreground(t.Muted),
+		ShortSeparator: lipgloss.NewStyle().Foreground(t.Muted),
+		FullKey:        lipgloss.NewStyle().Foreground(t.Subtle),
+		FullDesc:       lipgloss.NewStyle().Foreground(t.Muted),
+		FullSeparator:  lipgloss.NewStyle().Foreground(t.Muted),
+	}
+}
+
+func (s styles) tableStyles() table.Styles {
+	return table.Styles{
+		Header:   lipgloss.NewStyle().Bold(true).Foreground(s.theme.Iris).Padding(0, 1),
+		Cell:     lipgloss.NewStyle().Padding(0, 1),
+		Selected: s.selectedRow,
+	}
 }
 
 // styles for Bubbles list
-func newListStyles(t Theme) list.Styles {
+/* func newListStyles(t Theme) list.Styles {
 
 	s := list.Styles{}
 
@@ -154,16 +181,4 @@ func newItemStyles(t Theme) list.DefaultItemStyles {
 	s.FilterMatch = lipgloss.NewStyle().Underline(true)
 
 	return s
-}
-
-func newHelpStyles(t Theme) help.Styles {
-	return help.Styles{
-		Ellipsis:       lipgloss.NewStyle().Foreground(t.Muted),
-		ShortKey:       lipgloss.NewStyle().Foreground(t.Subtle),
-		ShortDesc:      lipgloss.NewStyle().Foreground(t.Muted),
-		ShortSeparator: lipgloss.NewStyle().Foreground(t.Muted),
-		FullKey:        lipgloss.NewStyle().Foreground(t.Subtle),
-		FullDesc:       lipgloss.NewStyle().Foreground(t.Muted),
-		FullSeparator:  lipgloss.NewStyle().Foreground(t.Muted),
-	}
-}
+} */

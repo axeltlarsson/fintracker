@@ -10,7 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 
@@ -37,6 +37,7 @@ type ImportSpec struct {
 type Model struct {
 	// Data
 	transactions    []finance.Transaction
+	visibleTxns     []finance.Transaction
 	totalBalance    finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
@@ -50,7 +51,7 @@ type Model struct {
 	importStatus string
 
 	// UI components - each is a Bubble with its own state
-	list     list.Model
+	table    table.Model
 	viewport viewport.Model
 	catInput textinput.Model
 	help     help.Model
@@ -59,7 +60,6 @@ type Model struct {
 
 	// UI state
 	screen        screen
-	selectedIndex int
 	filterAccount string
 	accounts      []string
 	isDark        bool
@@ -91,24 +91,21 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		}
 	}
 
-	// Convert transactions to list items
-	items := make([]list.Item, len(txns))
-	for i, t := range txns {
-		items[i] = TransactionItem{t}
-	}
+	cols := buildDefaultColumns()
+	rows := buildRows(txns, st)
 
-	// Create list
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles = newItemStyles(theme)
-	l := list.New(items, delegate, 0, 0) // size set on first WindowSizeMsg
-	l.Styles = newListStyles(theme)
-	l.Title = appTitle
-	l.SetShowStatusBar(true)
-	l.SetShowFilter(true)
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithStyles(st.tableStyles()),
+		table.WithHeight(20),
+	)
 
-	if len(txns) == 0 && len(specs) > 0 {
-		l.NewStatusMessage("Importing transactions...")
-	}
+	// TODO: update for new table layout
+	// if len(txns) == 0 && len(specs) > 0 {
+	// 	l.NewStatusMessage("Importing transactions...")
+	// }
 
 	// Category text input
 	ti := textinput.New()
@@ -124,6 +121,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 
 	return Model{
 		transactions:    txns,
+		visibleTxns:     txns,
 		totalBalance:    finance.CalculateBalance(txns),
 		accountSummary:  buildAccountSummary(txns),
 		categorySummary: buildCategorySummary(txns),
@@ -131,7 +129,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		categories:      collectCategories(txns, rules),
 		store:           store,
 		importSpecs:     specs,
-		list:            l,
+		table:           t,
 		catInput:        ti,
 		help:            help,
 		keys:            keys,
@@ -282,16 +280,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.list.Styles = newListStyles(m.theme)
-		delegate := list.NewDefaultDelegate()
-		delegate.Styles = newItemStyles(m.theme)
-		m.list.SetDelegate(delegate)
-		m.help.Styles = newHelpStyles(m.theme)
+		m.table.SetStyles(m.styles.tableStyles())
 		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		// Update selected row witdh to span full table
+		ts := m.styles.tableStyles()
+		ts.Selected = m.styles.selectedRow.Width(msg.Width + 200)
+		m.table.SetStyles(ts)
 
 		headerHeight := 0
 		footerHeight := 2
@@ -301,7 +300,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = true
 		}
 
-		m.list.SetSize(msg.Width, msg.Height)
+		m.table.SetWidth(msg.Width)
+		m.table.SetHeight(msg.Height)
 		m.catInput.SetWidth(msg.Width - 4)
 		m.viewport.SetWidth(msg.Width - 4)
 		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
@@ -312,13 +312,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ImportStartMsg:
 		m.importing = true
 		m.importStatus = "Importing files..."
-		m.list.NewStatusMessage(m.importStatus)
 		// kick off the first file
 		return m, m.importAllCmd()
 
 	case ImportProgressMsg:
 		m.importStatus = fmt.Sprintf("Parsed %s: %d transactions", msg.Account, msg.Count)
-		m.list.NewStatusMessage(m.importStatus)
 		// re-subscribe for next progress update
 		return m, listenForProgress(msg.Progress)
 
@@ -338,15 +336,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.categorySummary = buildCategorySummary(txns)
 		m.categories = collectCategories(txns, m.rules)
 		m.accounts = collectAccounts(txns)
-		m.refreshListItems()
+		m.refreshTable()
 
-		// set status message on the list
-		m.list.NewStatusMessage(
-			fmt.Sprintf("Imported %d transactions (%d new)", msg.Total, msg.Inserted))
+		m.importStatus = fmt.Sprintf("Imported %d transactions (%d new)", msg.Total, msg.Inserted)
 		return m, nil
 
 	case ImportErrMsg:
-		m.list.NewStatusMessage(fmt.Sprintf("Import error: %v", msg.Err))
+		m.importStatus = fmt.Sprintf("Import error: %v", msg.Err)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -376,29 +372,35 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		// Don't intercept keys when the list is filtering
-		if m.list.FilterState() == list.Filtering {
-			break
-		}
+		// TODO: implement filter here again?
+		// if m.table.FilterState() == list.Filtering {
+		// 	break
+		// }
 		switch {
 		case key.Matches(msg, m.keys.Enter):
-			if item, ok := m.list.SelectedItem().(TransactionItem); ok {
-				_ = item
-				m.selectedIndex = m.list.Index()
-				m.screen = detailScreen
-				m.viewport.SetContent(m.renderDetail())
-				m.viewport.GotoTop()
-			}
+			m.screen = detailScreen
+			m.viewport.SetContent(m.renderDetail())
+			m.viewport.GotoTop()
 			return m, nil
+
 		case key.Matches(msg, m.keys.Summary):
 			m.screen = summaryScreen
 			m.viewport.SetContent(m.renderSummary())
-
 			m.viewport.GotoTop()
 			return m, nil
+
 		case key.Matches(msg, m.keys.Filter):
 			m.filterAccount = m.nextAccount()
-			m.refreshListItems()
+			m.refreshTable()
 			return m, nil
+
+		case key.Matches(msg, m.keys.Category):
+			m.screen = categoryScreen
+			m.catInput.SetValue("")
+			m.catInput.SetSuggestions(m.categories)
+			cmd := m.catInput.Focus()
+			return m, cmd
+
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 
@@ -407,26 +409,52 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// forward everything else to the list component
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 
 }
 
-func (m *Model) refreshListItems() {
-	var items []list.Item
+func buildDefaultColumns() []table.Column {
+	return []table.Column{
+		{Title: "Date", Width: 12},
+		{Title: "Payee", Width: 25},
+		{Title: "Amount", Width: 14},
+		{Title: "Account", Width: 12},
+		{Title: "Category", Width: 18},
+	}
+}
+
+func buildRows(txns []finance.Transaction, styles styles) []table.Row {
+	rows := make([]table.Row, 0, len(txns))
+	for _, t := range txns {
+		// if m.filterAccount != "" && t.Account != m.filterAccount {
+		// 	continue
+		// }
+		cat := t.Category
+		if cat == "" {
+			cat = uncategorized
+		}
+		rows = append(rows, table.Row{
+			t.Date.Format("2006-01-02"),
+			t.Payee,
+			styles.amountStyle(t.Amount).Render(t.Amount.String()),
+			t.Account,
+			styles.category.Render(cat),
+		})
+	}
+	return rows
+}
+
+func (m *Model) refreshTable() {
+	visible := make([]finance.Transaction, 0, len(m.transactions))
 	for _, t := range m.transactions {
 		if m.filterAccount != "" && t.Account != m.filterAccount {
 			continue
 		}
-		items = append(items, TransactionItem{t})
+		visible = append(visible, t)
 	}
-	m.list.SetItems(items)
-
-	title := appTitle
-	if m.filterAccount != "" {
-		title += " — " + m.filterAccount
-	}
-	m.list.Title = title
+	m.visibleTxns = visible
+	m.table.SetRows(buildRows(m.transactions, m.styles))
 }
 
 func (m Model) nextAccount() string {
@@ -489,11 +517,11 @@ func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// apply category
-			m.transactions[m.selectedIndex].Category = value
+			m.visibleTxns[m.table.Cursor()].Category = value
 
 			// persist to database
 			if m.store != nil {
-				if err := m.store.UpdateCategory(m.transactions[m.selectedIndex]); err != nil {
+				if err := m.store.UpdateCategory(m.visibleTxns[m.table.Cursor()]); err != nil {
 					_ = err // for now silently ignore
 				}
 			}
@@ -506,8 +534,7 @@ func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sort.Strings(m.categories)
 			}
 
-			// refresh list items to show new category
-			m.refreshListItems()
+			m.refreshTable()
 
 			m.catInput.SetSuggestions(m.categories)
 			m.catInput.Blur()

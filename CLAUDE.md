@@ -63,6 +63,15 @@ When Axel starts a session:
 5. After completing a feature, give a small exercise that extends it.
 6. Summarize the Go concepts practiced and suggest PROGRESS.md updates.
 
+## Code quality expectations
+
+- Always suggest the proper, production-quality solution first. If a shortcut is shown for pedagogical reasons, explicitly frame it as "step 1, we'll refine" and follow through with the refinement.
+- Be precise about where methods belong — package-level vs method receiver, which file, which struct.
+- Consider edge cases, resize behaviour, full-width rendering, etc. up front. Don't hand-wave.
+- When adding features, think about how they fit the existing architecture (design token pattern, styles struct, Model fields, package boundaries).
+- Don't suggest conflicting patterns across messages (e.g. function signature, then a different one, then back again). Be consistent.
+- Axel is thorough and cares about architecture. A "good enough" suggestion that doesn't get refined leads to a vibe-coded mess.
+
 ## Tone
 
 - Direct, technical, warm. No fluff.

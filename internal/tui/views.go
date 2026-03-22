@@ -24,7 +24,9 @@ func (m Model) View() tea.View {
 
 	switch m.screen {
 	case listScreen:
-		content = m.list.View()
+		content = m.styles.title.Render(appTitle) + "\n" +
+			m.table.View() + "\n" +
+			m.styles.help.Render(m.help.View(m.keys))
 	case detailScreen:
 		header := m.styles.title.Render("fintracker — detail")
 		body := m.viewport.View()
@@ -37,7 +39,12 @@ func (m Model) View() tea.View {
 		content = header + "\n" + body + "\n" + footer
 
 	case categoryScreen:
-		t := m.transactions[m.selectedIndex]
+		idx := m.table.Cursor()
+		if idx < 0 || idx > len(m.visibleTxns) {
+			content = m.styles.warning.Render("cursor out of bounds")
+			break
+		}
+		t := m.visibleTxns[idx]
 		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", t.Payee))
 		prompt := m.styles.prompt.Render("Category: ")
 		input := m.catInput.View()
@@ -56,7 +63,11 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) renderDetail() string {
-	t := m.transactions[m.selectedIndex]
+	idx := m.table.Cursor()
+	if idx < 0 || idx >= len(m.visibleTxns) {
+		return m.styles.warning.Render("cursor out of bounds")
+	}
+	t := m.visibleTxns[idx]
 
 	var b strings.Builder
 	row := func(label, value string) {
