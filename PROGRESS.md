@@ -224,3 +224,68 @@ fintracker/
 **Covered:** Tested `parseAllFiles` — happy path (2 files, parallel), empty specs, and bad file path. The bad-path test exposed a real goroutine leak: successful goroutine blocked on unbuffered progress channel send while errgroup waited for all goroutines. Fixed with `select`/`ctx.Done()` pattern — cancellable channel operations. Full suite passes with `-race`.
 **Concepts taught:** `select` statement for multiplexing channel operations, `ctx.Done()` for cancellation-aware sends, testing concurrent code to find real bugs, goroutine leak detection via test timeouts.
 **Next:** Phase 12 (Rosé Pine theme) or pick from roadmap.
+
+### Session 5 — Rosé Pine theme + table component (Phase 12, in progress)
+**Date:** 2026-03-23
+**Covered:** Phase 12 (theming). Designed and implemented a three-layer design token system: Theme (primitive palette) → styles struct (semantic mapping) → views (consumers). Full 15-color Rosé Pine palette (Main, Moon, Dawn variants) with documentation from rosepinetheme.com. Theme struct uses `color.Color` (lipgloss v2 breaking change from v1's `type Color string`). Styles struct holds pre-built `lipgloss.Style` values; views never touch the theme directly. Added themed styles for bubbles list, table, and help components.
+
+Migrated from `bubbles/list` to `bubbles/table` for a proper column-aligned transaction view. Discovered ANSI nesting limitation: pre-rendered ANSI codes in cell data (colored amounts) contain reset sequences that kill the outer Selected background. The bubbles table has no `StyleFunc` (per-cell styling) — only Header/Cell/Selected.
+
+**In progress:** Building a custom `TxnTable` component. See implementation plan below.
+
+**Concepts taught:** design tokens (primitive → semantic → component), `color.Color` interface, lipgloss v2 API changes, functional options (`WithColumns`, `WithRows`, etc.), ANSI nesting limitations, composition over forking.
+
+---
+
+## Implementation plan: TxnTable component
+
+### Problem
+The `bubbles/v2/table` lacks per-cell styling (`StyleFunc`). Pre-rendering ANSI into row data causes nesting conflicts where inner ANSI resets kill the outer Selected row background.
+
+The `lipgloss/v2/table` has `StyleFunc` but is a renderer only — no cursor, keyboard navigation, or scrolling.
+
+### Solution
+Build `TxnTable` — a custom interactive component that composes lipgloss table (rendering) with our own state management (cursor, scrolling). Each piece does one thing well.
+
+### Architecture
+
+```
+TxnTable (internal/tui/txntable.go)
+├── State: cursor, offset, height, width, focused, rows, cols
+├── Rendering: delegates to lipgloss/v2/table with StyleFunc
+├── Navigation: j/k, page up/down, goto top/bottom
+└── API: Update(), View(), Cursor(), SelectedRow(), SetRows(), SetHeight(), etc.
+```
+
+### Files to create/modify
+
+1. **`internal/tui/txntable.go`** (new) — the component
+   - `TxnTable` struct: rows, cols, cursor, offset, height, width, focused, styleFunc, keymap
+   - `NewTxnTable(opts ...TxnTableOption)` — functional options constructor
+   - `Update(msg) (TxnTable, tea.Cmd)` — keyboard handling
+   - `View() string` — slices rows to visible window, builds lipgloss table with StyleFunc
+   - `MoveUp(n)`, `MoveDown(n)`, `GotoTop()`, `GotoBottom()` — cursor movement
+   - `Cursor() int`, `SelectedRow() Row`, `SetRows()`, `SetColumns()`, `SetHeight()`, `SetWidth()`
+   - Scrolling: keep cursor visible, adjust offset when cursor moves past viewport edges
+
+2. **`internal/tui/styles.go`** — add `transactionStyleFunc`
+   - `func (s styles) transactionStyleFunc(txns []finance.Transaction) TxnStyleFunc`
+   - Returns a closure that styles cells by column: Amount → Pine/Love, Category → Foam/Muted
+   - Selected rows get `HighlightLow` background on all cells
+   - No pre-rendered ANSI in row data — all styling at render time
+
+3. **`internal/tui/model.go`** — replace `table.Model` with `TxnTable`
+   - `buildRows()` returns plain strings (no `amountStyle.Render()`)
+   - `refreshTable()` rebuilds rows and updates the StyleFunc with current `visibleTxns`
+   - Remove `bubbles/v2/table` import
+
+4. **`internal/tui/views.go`** — use `m.table.View()` (same API, different implementation)
+
+### Step-by-step implementation order
+
+1. Create `txntable.go` with struct, constructor, cursor/scroll logic, View()
+2. Add `transactionStyleFunc` to styles.go
+3. Wire into model.go — replace bubbles table with TxnTable
+4. Update views.go if needed
+5. Test: navigate, scroll, resize, filter by account, enter detail, categorize
+6. Clean up: remove unused bubbles table/list imports and dead code
