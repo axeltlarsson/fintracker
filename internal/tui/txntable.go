@@ -1,0 +1,263 @@
+package tui
+
+import (
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
+)
+
+// TxnStyleFunc returs a style for a given cell
+// row is the aboslute index into the data (not the visible window)
+// col is the column index.
+// selected is true if this row is the cursor row
+type TxnStyleFunc func(row, col int, selected bool) lipgloss.Style
+
+// TxnColumn defines a column in the transaction table
+type TxnColumn struct {
+	Title string
+	Width int
+}
+
+// TxnTable is an interactive table that uses lipgloss/table for rendering
+// and manages its own cursor, scrolling, and keyboard navigation
+type TxnTable struct {
+	cols        []TxnColumn
+	rows        [][]string
+	cursor      int
+	offset      int // first visible row
+	height      int // number of visible rows
+	width       int
+	focused     bool
+	styleFunc   TxnStyleFunc
+	keyMap      TxnTableKeyMap
+	border      lipgloss.Border
+	borderStyle lipgloss.Style
+	headerStyle lipgloss.Style
+	// no selectedRow style?
+}
+
+type TxnTableKeyMap struct {
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+}
+
+func defaultTxnTableKeyMap() TxnTableKeyMap {
+	return TxnTableKeyMap{
+		Up:       key.NewBinding(key.WithKeys("up", "k")),
+		Down:     key.NewBinding(key.WithKeys("down", "j")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl-d")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl-u")),
+		Top:      key.NewBinding(key.WithKeys("home", "g")),
+		Bottom:   key.NewBinding(key.WithKeys("end", "G")),
+	}
+}
+
+// Option pattern for construction
+type TxnTableOption func(*TxnTable)
+
+func WithTxnColumns(cols []TxnColumn) TxnTableOption {
+	return func(t *TxnTable) { t.cols = cols }
+}
+
+func WithTxnRows(rows [][]string) TxnTableOption {
+	return func(t *TxnTable) { t.rows = rows }
+}
+
+func WithTxnHeight(h int) TxnTableOption {
+	return func(t *TxnTable) { t.height = h }
+}
+
+func WithTxnFocused(f bool) TxnTableOption {
+	return func(t *TxnTable) { t.focused = f }
+}
+
+func WithTxnStyleFunc(f TxnStyleFunc) TxnTableOption {
+	return func(t *TxnTable) { t.styleFunc = f }
+}
+
+func WithTxnBorder(b lipgloss.Border) TxnTableOption {
+	return func(t *TxnTable) { t.border = b }
+}
+
+func WithTxnBorderStyle(s lipgloss.Style) TxnTableOption {
+	return func(t *TxnTable) { t.borderStyle = s }
+}
+
+func WithTxnHeaderStyle(s lipgloss.Style) TxnTableOption {
+	return func(t *TxnTable) { t.headerStyle = s }
+}
+
+func NewTxnTable(opts ...TxnTableOption) TxnTable {
+	t := TxnTable{
+		height: 20,
+		keyMap: defaultTxnTableKeyMap(),
+	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
+}
+
+// --- State access ---
+
+func (t TxnTable) Cursor() int { return t.cursor }
+func (t TxnTable) SelectedRow() []string {
+	if t.cursor < 0 || t.cursor >= len(t.rows) {
+		return nil
+	}
+	return t.rows[t.cursor]
+}
+
+// --- State mutation ---
+
+func (t *TxnTable) SetRows(rows [][]string) {
+	t.rows = rows
+	if t.cursor >= len(t.rows) {
+		t.cursor = max(len(t.rows)-1, 0)
+	}
+	t.clampOffset()
+}
+
+func (t *TxnTable) SetColumns(cols []TxnColumn) { t.cols = cols }
+func (t *TxnTable) SetHeight(h int)             { t.height = h; t.clampOffset() }
+func (t *TxnTable) SetWidth(w int)              { t.width = w }
+func (t *TxnTable) SetStyleFunc(f TxnStyleFunc) { t.styleFunc = f }
+func (t *TxnTable) Focus()                      { t.focused = true }
+func (t *TxnTable) Blur()                       { t.focused = false }
+
+// --  Navigation ---
+func (t *TxnTable) MoveUp(n int) {
+	t.cursor = clamp(t.cursor-n, 0, max(len(t.rows)-1, 0))
+	// scroll up if cursor is above the visible window
+	if t.cursor < t.offset {
+		t.offset = t.cursor
+	}
+}
+
+func (t *TxnTable) MoveDown(n int) {
+	t.cursor = clamp(t.cursor+n, 0, max(len(t.rows)-1, 0))
+	// Scroll down if cursor is below the visible window
+	if t.cursor >= t.offset+t.height {
+		t.offset = t.cursor - t.height + 1
+	}
+}
+
+func (t *TxnTable) GotoTop() {
+	t.cursor = 0
+	t.offset = 0
+}
+
+func (t *TxnTable) GotoBottom() {
+	t.cursor = max(len(t.rows)-1, 0)
+	t.clampOffset()
+}
+
+func (t *TxnTable) clampOffset() {
+	maxOffset := max(len(t.rows)-t.height, 0)
+	t.offset = clamp(t.offset, 0, maxOffset)
+	// Ensure cursor is still visible after offset clamp
+	t.offset = min(t.offset, t.cursor)
+	if t.cursor >= t.offset+t.height && t.height > 0 {
+		t.offset = t.cursor - t.height + 1
+	}
+}
+
+// --- Bubble tea interface ---
+
+func (t TxnTable) Update(msg tea.Msg) (TxnTable, tea.Cmd) {
+
+	if !t.focused {
+		return t, nil
+	}
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, t.keyMap.Up):
+			t.MoveUp(1)
+		case key.Matches(msg, t.keyMap.Down):
+			t.MoveDown(1)
+		case key.Matches(msg, t.keyMap.PageUp):
+			t.MoveUp(t.height)
+		case key.Matches(msg, t.keyMap.PageDown):
+			t.MoveDown(t.height)
+		case key.Matches(msg, t.keyMap.Top):
+			t.GotoTop()
+		case key.Matches(msg, t.keyMap.Bottom):
+			t.GotoBottom()
+		}
+	}
+	return t, nil
+}
+
+func (t TxnTable) View() string {
+	if len(t.cols) == 0 {
+		return ""
+	}
+
+	// Compute visible window
+	end := min(t.offset+t.height, len(t.rows))
+	visible := t.rows[t.offset:end]
+
+	// Extract column headers
+	headers := make([]string, len(t.cols))
+	for i, c := range t.cols {
+		headers[i] = c.Title
+	}
+
+	// Build lipgloss table rows
+	tableRows := make([][]string, len(visible))
+	copy(tableRows, visible)
+
+	// Capture offset and cursor for the closure
+	offset := t.offset
+	cursor := t.cursor
+	styleFunc := t.styleFunc
+
+	lt := table.New().
+		Headers(headers...).
+		Rows(tableRows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return t.headerStyle
+			}
+			absRow := row + offset
+			isSelected := absRow == cursor
+			if styleFunc != nil {
+				return styleFunc(absRow, col, isSelected)
+			}
+			// Fallback: default style
+			s := lipgloss.NewStyle().Padding(0, 1)
+			if isSelected {
+				s = s.Bold(true)
+			}
+			return s
+		})
+	if t.width > 0 {
+		lt = lt.Width(t.width)
+	}
+
+	// Apply border if set
+	lt = lt.Border(t.border).BorderStyle(t.borderStyle)
+
+	return lt.Render()
+
+}
+
+func clamp(v, low, high int) int {
+	return min(max(v, low), high)
+}
+
+// TODO: does this location make sense?
+// Ideally want to statically tie to the Transaction I guess
+const (
+	colDate     = 0
+	colPayee    = 1
+	colAmount   = 2
+	colAccount  = 3
+	colCategory = 4
+)

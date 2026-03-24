@@ -10,7 +10,6 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 
@@ -51,7 +50,7 @@ type Model struct {
 	importStatus string
 
 	// UI components - each is a Bubble with its own state
-	table    table.Model
+	table    TxnTable
 	viewport viewport.Model
 	catInput textinput.Model
 	help     help.Model
@@ -92,20 +91,20 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	}
 
 	cols := buildDefaultColumns()
-	rows := buildRows(txns, st)
+	rows := buildRows(txns)
 
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithRows(rows),
-		table.WithFocused(true),
-		table.WithStyles(st.tableStyles()),
-		table.WithHeight(20),
+	t := NewTxnTable(
+		// Data
+		WithTxnColumns(cols),
+		WithTxnRows(rows),
+		// Layout
+		WithTxnFocused(true),
+		WithTxnHeight(20),
+		// Appearance - from styles, model just wires it up
+		WithTxnStyleFunc(st.transactionStyleFunc(txns)),
+		WithTxnHeaderStyle(st.tableHeader),
+		WithTxnBorderStyle(st.tableBorder),
 	)
-
-	// TODO: update for new table layout
-	// if len(txns) == 0 && len(specs) > 0 {
-	// 	l.NewStatusMessage("Importing transactions...")
-	// }
 
 	// Category text input
 	ti := textinput.New()
@@ -280,17 +279,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.table.SetStyles(m.styles.tableStyles())
+		m.table.SetStyleFunc(m.styles.transactionStyleFunc(m.visibleTxns))
+		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		// Update selected row witdh to span full table
-		ts := m.styles.tableStyles()
-		ts.Selected = m.styles.selectedRow.Width(msg.Width + 200)
-		m.table.SetStyles(ts)
 
 		headerHeight := 0
 		footerHeight := 2
@@ -301,7 +296,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.table.SetWidth(msg.Width)
-		m.table.SetHeight(msg.Height)
+		m.table.SetHeight(msg.Height - 6) // room for title, help, borders
 		m.catInput.SetWidth(msg.Width - 4)
 		m.viewport.SetWidth(msg.Width - 4)
 		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
@@ -414,8 +409,8 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 }
 
-func buildDefaultColumns() []table.Column {
-	return []table.Column{
+func buildDefaultColumns() []TxnColumn {
+	return []TxnColumn{
 		{Title: "Date", Width: 12},
 		{Title: "Payee", Width: 25},
 		{Title: "Amount", Width: 14},
@@ -424,22 +419,19 @@ func buildDefaultColumns() []table.Column {
 	}
 }
 
-func buildRows(txns []finance.Transaction, styles styles) []table.Row {
-	rows := make([]table.Row, 0, len(txns))
+func buildRows(txns []finance.Transaction) [][]string {
+	rows := make([][]string, 0, len(txns))
 	for _, t := range txns {
-		// if m.filterAccount != "" && t.Account != m.filterAccount {
-		// 	continue
-		// }
 		cat := t.Category
 		if cat == "" {
 			cat = uncategorized
 		}
-		rows = append(rows, table.Row{
+		rows = append(rows, []string{
 			t.Date.Format("2006-01-02"),
 			t.Payee,
-			styles.amountStyle(t.Amount).Render(t.Amount.String()),
+			t.Amount.String(),
 			t.Account,
-			styles.category.Render(cat),
+			cat,
 		})
 	}
 	return rows
@@ -454,7 +446,8 @@ func (m *Model) refreshTable() {
 		visible = append(visible, t)
 	}
 	m.visibleTxns = visible
-	m.table.SetRows(buildRows(m.transactions, m.styles))
+	m.table.SetRows(buildRows(visible))
+	m.table.SetStyleFunc(m.styles.transactionStyleFunc(visible))
 }
 
 func (m Model) nextAccount() string {

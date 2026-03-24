@@ -5,8 +5,7 @@ import (
 	"fintracker/internal/finance"
 
 	"charm.land/bubbles/v2/help"
-	// "charm.land/bubbles/v2/list"
-	"charm.land/bubbles/v2/table"
+	"image/color"
 )
 
 type styles struct {
@@ -95,11 +94,15 @@ func newStyles(t Theme) styles {
 	}
 }
 
-func (s styles) amountStyle(amount finance.Öre) lipgloss.Style {
+func (s styles) amountColor(amount finance.Öre) color.Color {
 	if amount >= 0 {
-		return lipgloss.NewStyle().Foreground(s.theme.Pine)
+		return s.theme.Pine
 	}
-	return lipgloss.NewStyle().Foreground(s.theme.Love)
+	return s.theme.Love
+
+}
+func (s styles) amountStyle(amount finance.Öre) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(s.amountColor(amount))
 }
 
 func newHelpStyles(t Theme) help.Styles {
@@ -114,71 +117,36 @@ func newHelpStyles(t Theme) help.Styles {
 	}
 }
 
-func (s styles) tableStyles() table.Styles {
-	return table.Styles{
-		Header:   lipgloss.NewStyle().Bold(true).Foreground(s.theme.Iris).Padding(0, 1),
-		Cell:     lipgloss.NewStyle().Padding(0, 1),
-		Selected: s.selectedRow,
+func (s styles) transactionStyleFunc(txns []finance.Transaction) TxnStyleFunc {
+	return func(row, col int, selected bool) lipgloss.Style {
+		base := lipgloss.NewStyle().Padding(0, 1)
+
+		if selected {
+			base = base.Bold(true).Background(s.theme.HighlightLow)
+		}
+
+		if row < 0 || row >= len(txns) {
+			return base
+		}
+
+		switch col {
+		case colAmount: // Amount
+			if txns[row].Amount >= 0 {
+				return base.Foreground(s.theme.Pine).Align(lipgloss.Right)
+			}
+			return base.Foreground(s.theme.Love).Align(lipgloss.Right)
+		case colCategory:
+			if txns[row].Category == "" {
+				// TODO should use uncategorized style?
+				return base.Foreground(s.theme.Muted).Italic(true)
+			}
+			return base.Foreground(s.theme.Foam).Italic(true)
+		}
+		if selected {
+			// TODO: use selectedRow style?
+			return base.Foreground(s.theme.Gold)
+		}
+		return base
+
 	}
 }
-
-// styles for Bubbles list
-/* func newListStyles(t Theme) list.Styles {
-
-	s := list.Styles{}
-
-	s.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 2)
-	s.Title = lipgloss.NewStyle().
-		Background(t.Iris).
-		Foreground(t.Base).
-		Padding(0, 1)
-
-	s.Spinner = lipgloss.NewStyle().Foreground(t.Subtle)
-	s.StatusBar = lipgloss.NewStyle().
-		Foreground(t.Subtle).
-		Padding(0, 0, 1, 2)
-	s.StatusEmpty = lipgloss.NewStyle().Foreground(t.Muted)
-	s.StatusBarActiveFilter = lipgloss.NewStyle().Foreground(t.Text)
-	s.StatusBarFilterCount = lipgloss.NewStyle().Foreground(t.Muted)
-	s.NoItems = lipgloss.NewStyle().Foreground(t.Muted)
-	s.PaginationStyle = lipgloss.NewStyle().PaddingLeft(2)
-	s.HelpStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2)
-	s.ActivePaginationDot = lipgloss.NewStyle().
-		Foreground(t.Subtle).SetString("•")
-	s.InactivePaginationDot = lipgloss.NewStyle().
-		Foreground(t.Muted).SetString("•")
-	s.DividerDot = lipgloss.NewStyle().
-		Foreground(t.Muted).SetString(" • ")
-	s.DefaultFilterCharacterMatch = lipgloss.NewStyle().Underline(true)
-
-	return s
-
-}
-
-func newItemStyles(t Theme) list.DefaultItemStyles {
-	s := list.DefaultItemStyles{}
-
-	s.NormalTitle = lipgloss.NewStyle().
-		Foreground(t.Text).
-		Padding(0, 0, 0, 2)
-	s.NormalDesc = s.NormalTitle.
-		Foreground(t.Subtle)
-
-	s.SelectedTitle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(t.Iris).
-		Foreground(t.Iris).
-		Padding(0, 0, 0, 1)
-	s.SelectedDesc = s.SelectedTitle.
-		Foreground(t.Subtle)
-
-	s.DimmedTitle = lipgloss.NewStyle().
-		Foreground(t.Muted).
-		Padding(0, 0, 0, 2)
-	s.DimmedDesc = s.DimmedTitle.
-		Foreground(t.HighlightHigh)
-
-	s.FilterMatch = lipgloss.NewStyle().Underline(true)
-
-	return s
-} */
