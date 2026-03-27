@@ -39,12 +39,12 @@ func (m Model) View() tea.View {
 		content = header + "\n" + body + "\n" + footer
 
 	case categoryScreen:
-		idx := m.table.Cursor()
-		if idx < 0 || idx > len(m.visibleTxns) {
+		txn := m.selectedTxn()
+		if txn == nil {
 			content = m.styles.warning.Render("cursor out of bounds")
 			break
 		}
-		t := m.visibleTxns[idx]
+		t := *txn
 		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", t.Payee))
 		prompt := m.styles.prompt.Render("Category: ")
 		input := m.catInput.View()
@@ -63,11 +63,11 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) renderDetail() string {
-	idx := m.table.Cursor()
-	if idx < 0 || idx >= len(m.visibleTxns) {
+	txn := m.selectedTxn()
+	if txn == nil {
 		return m.styles.warning.Render("cursor out of bounds")
 	}
-	t := m.visibleTxns[idx]
+	t := *txn
 
 	var b strings.Builder
 	row := func(label, value string) {

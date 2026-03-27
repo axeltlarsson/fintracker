@@ -36,7 +36,7 @@ type ImportSpec struct {
 type Model struct {
 	// Data
 	transactions    []finance.Transaction
-	visibleTxns     []finance.Transaction
+	visibleIdx      []int // indices into transactions
 	totalBalance    finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
@@ -91,7 +91,8 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	}
 
 	cols := buildDefaultColumns()
-	rows := buildRows(txns)
+	visibleIdx := initialVisibleIdx(len(txns))
+	rows := buildRowsFromIdx(txns, visibleIdx)
 
 	t := NewTxnTable(
 		// Data
@@ -101,7 +102,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		WithTxnFocused(true),
 		WithTxnHeight(20),
 		// Appearance - from styles, model just wires it up
-		WithTxnStyleFunc(st.transactionStyleFunc(txns)),
+		WithTxnStyleFunc(st.transactionStyleFuncFromIdx(txns, visibleIdx)),
 		WithTxnHeaderStyle(st.tableHeader),
 		WithTxnBorderStyle(st.tableBorder),
 	)
@@ -120,7 +121,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 
 	return Model{
 		transactions:    txns,
-		visibleTxns:     txns,
+		visibleIdx:      visibleIdx,
 		totalBalance:    finance.CalculateBalance(txns),
 		accountSummary:  buildAccountSummary(txns),
 		categorySummary: buildCategorySummary(txns),
@@ -138,7 +139,17 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		styles:          st,
 	}, nil
 }
+
+func initialVisibleIdx(n int) []int {
+	idx := make([]int, n)
+	for i := range idx {
+		idx[i] = i
+	}
+	return idx
+}
+
 func collectCategories(txns []finance.Transaction, rules []finance.Rule) []string {
+
 	seen := make(map[string]bool)
 
 	for _, r := range rules {
@@ -279,7 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.table.SetStyleFunc(m.styles.transactionStyleFunc(m.visibleTxns))
+		m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.visibleIdx))
 		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
@@ -419,9 +430,10 @@ func buildDefaultColumns() []TxnColumn {
 	}
 }
 
-func buildRows(txns []finance.Transaction) [][]string {
-	rows := make([][]string, 0, len(txns))
-	for _, t := range txns {
+func buildRowsFromIdx(txns []finance.Transaction, idx []int) [][]string {
+	rows := make([][]string, 0, len(idx))
+	for _, i := range idx {
+		t := txns[i]
 		cat := t.Category
 		if cat == "" {
 			cat = uncategorized
@@ -437,17 +449,23 @@ func buildRows(txns []finance.Transaction) [][]string {
 	return rows
 }
 
+// selectedTxn returns a pointer to the transactions under the cursor
+func (m *Model) selectedTxn() *finance.Transaction {
+	if len(m.visibleIdx) == 0 {
+		return nil
+	}
+	return &m.transactions[m.visibleIdx[m.table.Cursor()]]
+}
 func (m *Model) refreshTable() {
-	visible := make([]finance.Transaction, 0, len(m.transactions))
-	for _, t := range m.transactions {
+	m.visibleIdx = m.visibleIdx[:0]
+	for i, t := range m.transactions {
 		if m.filterAccount != "" && t.Account != m.filterAccount {
 			continue
 		}
-		visible = append(visible, t)
+		m.visibleIdx = append(m.visibleIdx, i)
 	}
-	m.visibleTxns = visible
-	m.table.SetRows(buildRows(visible))
-	m.table.SetStyleFunc(m.styles.transactionStyleFunc(visible))
+	m.table.SetRows(buildRowsFromIdx(m.transactions, m.visibleIdx))
+	m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.visibleIdx))
 }
 
 func (m Model) nextAccount() string {
@@ -510,11 +528,12 @@ func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// apply category
-			m.visibleTxns[m.table.Cursor()].Category = value
+			txn := m.selectedTxn()
+			txn.Category = value
 
 			// persist to database
 			if m.store != nil {
-				if err := m.store.UpdateCategory(m.visibleTxns[m.table.Cursor()]); err != nil {
+				if err := m.store.UpdateCategory(*txn); err != nil {
 					_ = err // for now silently ignore
 				}
 			}

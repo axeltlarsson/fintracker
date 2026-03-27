@@ -117,7 +117,7 @@ func newHelpStyles(t Theme) help.Styles {
 	}
 }
 
-func (s styles) transactionStyleFunc(txns []finance.Transaction) TxnStyleFunc {
+func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []int) TxnStyleFunc {
 	return func(row, col int, selected bool) lipgloss.Style {
 		base := lipgloss.NewStyle().Padding(0, 1)
 
@@ -125,18 +125,20 @@ func (s styles) transactionStyleFunc(txns []finance.Transaction) TxnStyleFunc {
 			base = base.Bold(true).Background(s.theme.HighlightLow)
 		}
 
-		if row < 0 || row >= len(txns) {
+		if row < 0 || row >= len(idx) {
 			return base
 		}
 
+		t := txns[idx[row]]
+
 		switch col {
 		case colAmount: // Amount
-			if txns[row].Amount >= 0 {
+			if t.Amount >= 0 {
 				return base.Foreground(s.theme.Pine).Align(lipgloss.Right)
 			}
 			return base.Foreground(s.theme.Love).Align(lipgloss.Right)
 		case colCategory:
-			if txns[row].Category == "" {
+			if t.Category == "" {
 				// TODO should use uncategorized style?
 				return base.Foreground(s.theme.Muted).Italic(true)
 			}
