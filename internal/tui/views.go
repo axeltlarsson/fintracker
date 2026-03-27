@@ -25,8 +25,8 @@ func (m Model) View() tea.View {
 	switch m.screen {
 	case listScreen:
 		content = m.styles.title.Render(appTitle) + "\n" +
-			m.table.View() + "\n" +
 			m.renderStatusLine() + "\n" +
+			m.table.View() + "\n" +
 			m.styles.help.Render(m.help.View(m.keys))
 	case detailScreen:
 		header := m.styles.title.Render("fintracker — detail")
@@ -201,11 +201,11 @@ func sortedKeys(m map[string]finance.Öre) []string {
 
 // renderStatusLine renders the contextual status bar between table and help.
 func (m Model) renderStatusLine() string {
-	var left, right string
+	var left, middle, right string
 
 	// Left: filter state
 	if m.filterAccount == "" {
-		left = m.styles.muted.Render("All accounts")
+		left = "All accounts"
 	} else {
 		// Find position in cycle
 		pos := 0
@@ -220,30 +220,34 @@ func (m Model) renderStatusLine() string {
 		)
 	}
 
+	// Middle: search or import status
+	if m.searching || m.searchInput.Value() != "" {
+		middle = m.styles.statusFilter.Render("search: ") + m.searchInput.View()
+	} else {
+		middle = m.styles.statusMessage.Render(m.importStatus)
+	}
+
 	// Right: transaction count
 	total := len(m.transactions)
-	visible := len(m.visibleIdx)
+	filtered := m.table.FilteredCount()
+	structFiltered := len(m.visibleIdx)
 	var msg string
-	if visible < total {
-		msg = fmt.Sprintf("%d of %d transactions", visible, total)
+	if filtered < structFiltered {
+		msg = fmt.Sprintf("%d of %d transactions", filtered, total)
+	} else if structFiltered < total {
+		msg = fmt.Sprintf("%d of %d transactions", structFiltered, total)
 	} else {
 		msg = fmt.Sprintf("%d transactions", total)
 	}
 	right = m.styles.muted.Render(msg)
 
-	// Middle: import status (if any)
-	middle := m.styles.statusMessage.Render(m.importStatus)
+	// Layout: left -- middle -- right - fixed-width columns
+	leftW := m.width / 3
+	rightW := m.width / 3
+	middleW := m.width - leftW - rightW
 
-	// Layout: left -- middle -- right, padded to full width
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(middle) - 4
-	if gap < 0 {
-		gap = 1
-	}
-	leftGap := gap / 2
-	rightGap := gap - leftGap
-
-	return m.styles.statusBar.Width(m.width).Render(
-		left + strings.Repeat(" ", leftGap) + middle + strings.Repeat(" ", rightGap) + right,
-	)
+	return m.styles.statusLeft.Width(leftW).Render(left) +
+		m.styles.statusMiddle.Width(middleW).Render(middle) +
+		m.styles.statusRight.Width(rightW).Render(right)
 
 }

@@ -26,9 +26,11 @@ type styles struct {
 	value         lipgloss.Style
 	warning       lipgloss.Style
 
-	statusBar     lipgloss.Style
 	statusFilter  lipgloss.Style
 	statusMessage lipgloss.Style
+	statusLeft    lipgloss.Style
+	statusMiddle  lipgloss.Style
+	statusRight   lipgloss.Style
 }
 
 func newStyles(t Theme) styles {
@@ -98,9 +100,17 @@ func newStyles(t Theme) styles {
 			Bold(true).
 			Foreground(t.Love),
 
-		statusBar: lipgloss.NewStyle().
+		statusLeft: lipgloss.NewStyle().
 			Background(t.Surface).
-			PaddingLeft(2).
+			Foreground(t.Muted).
+			PaddingLeft(2),
+
+		statusMiddle: lipgloss.NewStyle().
+			Background(t.Surface),
+
+		statusRight: lipgloss.NewStyle().
+			Background(t.Surface).
+			Foreground(t.Muted).
 			PaddingRight(2),
 
 		statusFilter: lipgloss.NewStyle().

@@ -66,6 +66,8 @@ type Model struct {
 	width         int
 	height        int
 	ready         bool // true once we've received the first WindowSizeMsg
+	searching     bool // TODO: would it make sense to have a proper state enum/state machine?
+	searchInput   textinput.Model
 
 	// Theming
 	theme  Theme
@@ -114,6 +116,11 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	ti.CharLimit = 50
 	ti.ShowSuggestions = true
 
+	// Search input
+	si := textinput.New()
+	si.Placeholder = "search..."
+	si.CharLimit = 100
+
 	keys := newKeyMap()
 	catKeys := newCategoryKeyMap()
 
@@ -121,6 +128,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	help.Styles = newHelpStyles(theme)
 
 	return Model{
+		// Data
 		transactions:    txns,
 		visibleIdx:      visibleIdx,
 		totalBalance:    finance.CalculateBalance(txns),
@@ -129,15 +137,24 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		rules:           rules,
 		categories:      collectCategories(txns, rules),
 		store:           store,
-		importSpecs:     specs,
-		table:           t,
-		catInput:        ti,
-		help:            help,
-		keys:            keys,
-		catKeys:         catKeys,
-		accounts:        collectAccounts(txns),
-		theme:           theme,
-		styles:          st,
+
+		// Import state
+		importSpecs: specs,
+
+		// UI components
+		table:    t,
+		catInput: ti,
+		help:     help,
+		keys:     keys,
+		catKeys:  catKeys,
+
+		// UI state
+		accounts:    collectAccounts(txns),
+		searchInput: si,
+
+		// Theming
+		theme:  theme,
+		styles: st,
 	}, nil
 }
 
@@ -299,19 +316,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		headerHeight := 0
-		footerHeight := 2
-
+		// Layout budget - each element's fixed height
+		const (
+			titleH       = 2 // title text + margin bottom
+			tableBorderH = 3 // header row + top/bottom border
+			statusLineH  = 1
+			helpH        = 2 // help text + margin top
+		)
+		chrome := titleH + tableBorderH + statusLineH + helpH
+		tableRows := max(msg.Height-chrome, 1)
 		if !m.ready {
 			m.viewport = viewport.New()
 			m.ready = true
 		}
 
 		m.table.SetWidth(msg.Width)
-		m.table.SetHeight(msg.Height - 6) // room for title, help, borders
+		m.table.SetHeight(tableRows)
 		m.catInput.SetWidth(msg.Width - 4)
+		m.searchInput.SetWidth(msg.Width / 3) // reasonable width for status line context
 		m.viewport.SetWidth(msg.Width - 4)
-		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
+		m.viewport.SetHeight(msg.Height - 2) // detail/summary screens: minimal chrome
 		m.help.SetWidth(msg.Width)
 
 		return m, nil
@@ -376,13 +400,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+
+	if m.searching {
+		return m.updateSearch(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		// Don't intercept keys when the list is filtering
-		// TODO: implement filter here again?
-		// if m.table.FilterState() == list.Filtering {
-		// 	break
-		// }
+
 		switch {
 		case key.Matches(msg, m.keys.Enter):
 			m.screen = detailScreen
@@ -400,6 +424,12 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filterAccount = m.nextAccount()
 			m.refreshTable()
 			return m, nil
+
+		case key.Matches(msg, m.keys.Search):
+			m.searching = true
+			m.searchInput.SetValue("")
+			cmd := m.searchInput.Focus()
+			return m, cmd
 
 		case key.Matches(msg, m.keys.Category):
 			m.screen = categoryScreen
@@ -423,6 +453,30 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 
+}
+func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.searching = false
+			m.searchInput.Blur()
+			m.searchInput.SetValue("")
+			m.table.ClearFilter()
+			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			m.searching = false
+			m.searchInput.Blur()
+			// keep filter active, just exit input mode
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	// refresh table on every keystroke
+	m.table.SetFilter(m.searchInput.Value())
+	return m, cmd
 }
 
 func buildCols() []TxnColumn {

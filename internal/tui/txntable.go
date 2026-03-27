@@ -5,6 +5,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"strings"
 )
 
 // TxnStyleFunc returs a style for a given cell
@@ -36,6 +37,11 @@ type TxnTable struct {
 	borderStyle lipgloss.Style
 	headerStyle lipgloss.Style
 	// no selectedRow style?
+
+	// Filtering
+	query    string
+	filtered []int // indices into t.rows that match the query
+
 }
 
 type TxnTableKeyMap struct {
@@ -55,6 +61,13 @@ func defaultTxnTableKeyMap() TxnTableKeyMap {
 		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl-u")),
 		Top:      key.NewBinding(key.WithKeys("home", "g")),
 		Bottom:   key.NewBinding(key.WithKeys("end", "G")),
+	}
+}
+
+func (t *TxnTable) resetFiltered() {
+	t.filtered = make([]int, len(t.rows))
+	for i := range t.filtered {
+		t.filtered[i] = i
 	}
 }
 
@@ -101,25 +114,33 @@ func NewTxnTable(opts ...TxnTableOption) TxnTable {
 	for _, opt := range opts {
 		opt(&t)
 	}
+	t.resetFiltered()
 	return t
 }
 
 // --- State access ---
 
-func (t TxnTable) Cursor() int { return t.cursor }
+func (t TxnTable) Cursor() int {
+	if len(t.filtered) == 0 {
+		return 0
+	}
+	return t.filtered[t.cursor]
+
+}
 func (t TxnTable) SelectedRow() []string {
-	if t.cursor < 0 || t.cursor >= len(t.rows) {
+	if t.cursor < 0 || t.cursor >= len(t.filtered) {
 		return nil
 	}
-	return t.rows[t.cursor]
+	return t.rows[t.filtered[t.cursor]]
 }
 
 // --- State mutation ---
 
 func (t *TxnTable) SetRows(rows [][]string) {
 	t.rows = rows
-	if t.cursor >= len(t.rows) {
-		t.cursor = max(len(t.rows)-1, 0)
+	t.resetFiltered()
+	if t.cursor >= len(t.filtered) {
+		t.cursor = max(len(t.filtered)-1, 0)
 	}
 	t.clampOffset()
 }
@@ -131,9 +152,43 @@ func (t *TxnTable) SetStyleFunc(f TxnStyleFunc) { t.styleFunc = f }
 func (t *TxnTable) Focus()                      { t.focused = true }
 func (t *TxnTable) Blur()                       { t.focused = false }
 
+func (t *TxnTable) SetFilter(query string) {
+	t.query = strings.ToLower(query)
+	t.applyFilter()
+}
+
+func (t *TxnTable) ClearFilter() {
+	t.query = ""
+	t.resetFiltered()
+	t.cursor = clamp(t.cursor, 0, max(len(t.filtered)-1, 0))
+	t.clampOffset()
+}
+
+func (t TxnTable) FilteredCount() int { return len(t.filtered) }
+
+func (t *TxnTable) applyFilter() {
+	t.filtered = t.filtered[:0]
+	for i, row := range t.rows {
+		if t.query == "" || matchRow(row, t.query) {
+			t.filtered = append(t.filtered, i)
+		}
+	}
+	t.cursor = clamp(t.cursor, 0, max(len(t.filtered)-1, 0))
+	t.clampOffset()
+}
+
+func matchRow(row []string, query string) bool {
+	for _, cell := range row {
+		if strings.Contains(strings.ToLower(cell), query) {
+			return true
+		}
+	}
+	return false
+}
+
 // --  Navigation ---
 func (t *TxnTable) MoveUp(n int) {
-	t.cursor = clamp(t.cursor-n, 0, max(len(t.rows)-1, 0))
+	t.cursor = clamp(t.cursor-n, 0, max(len(t.filtered)-1, 0))
 	// scroll up if cursor is above the visible window
 	if t.cursor < t.offset {
 		t.offset = t.cursor
@@ -141,7 +196,7 @@ func (t *TxnTable) MoveUp(n int) {
 }
 
 func (t *TxnTable) MoveDown(n int) {
-	t.cursor = clamp(t.cursor+n, 0, max(len(t.rows)-1, 0))
+	t.cursor = clamp(t.cursor+n, 0, max(len(t.filtered)-1, 0))
 	// Scroll down if cursor is below the visible window
 	if t.cursor >= t.offset+t.height {
 		t.offset = t.cursor - t.height + 1
@@ -154,12 +209,12 @@ func (t *TxnTable) GotoTop() {
 }
 
 func (t *TxnTable) GotoBottom() {
-	t.cursor = max(len(t.rows)-1, 0)
+	t.cursor = max(len(t.filtered)-1, 0)
 	t.clampOffset()
 }
 
 func (t *TxnTable) clampOffset() {
-	maxOffset := max(len(t.rows)-t.height, 0)
+	maxOffset := max(len(t.filtered)-t.height, 0)
 	t.offset = clamp(t.offset, 0, maxOffset)
 	// Ensure cursor is still visible after offset clamp
 	t.offset = min(t.offset, t.cursor)
@@ -201,8 +256,11 @@ func (t TxnTable) View() string {
 	}
 
 	// Compute visible window
-	end := min(t.offset+t.height, len(t.rows))
-	visible := t.rows[t.offset:end]
+	end := min(t.offset+t.height, len(t.filtered))
+	visible := make([][]string, 0, end-t.offset)
+	for _, idx := range t.filtered[t.offset:end] {
+		visible = append(visible, t.rows[idx])
+	}
 
 	// Extract column headers
 	headers := make([]string, len(t.cols))
@@ -218,6 +276,7 @@ func (t TxnTable) View() string {
 	offset := t.offset
 	cursor := t.cursor
 	styleFunc := t.styleFunc
+	filtered := t.filtered
 
 	lt := table.New().
 		Headers(headers...).
@@ -228,9 +287,10 @@ func (t TxnTable) View() string {
 				return t.headerStyle.Align(align)
 			}
 			absRow := row + offset
+			origRow := filtered[absRow]
 			isSelected := absRow == cursor
 			if styleFunc != nil {
-				return styleFunc(absRow, col, isSelected).Align(align)
+				return styleFunc(origRow, col, isSelected).Align(align)
 			}
 
 			// Fallback: default style
@@ -247,7 +307,13 @@ func (t TxnTable) View() string {
 	// Apply border if set
 	lt = lt.Border(t.border).BorderStyle(t.borderStyle)
 
-	return lt.Render()
+	rendered := lt.Render()
+	renderedHeight := lipgloss.Height(rendered)
+	targetHeight := t.height + 3 // rows + header + top/bottom border
+	if renderedHeight < targetHeight {
+		return rendered + strings.Repeat("\n", targetHeight-renderedHeight)
+	}
+	return rendered
 
 }
 
