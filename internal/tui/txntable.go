@@ -17,6 +17,7 @@ type TxnStyleFunc func(row, col int, selected bool) lipgloss.Style
 type TxnColumn struct {
 	Title string
 	Width int
+	Align lipgloss.Position
 }
 
 // TxnTable is an interactive table that uses lipgloss/table for rendering
@@ -222,20 +223,22 @@ func (t TxnTable) View() string {
 		Headers(headers...).
 		Rows(tableRows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
+			align := t.cols[col].Align
 			if row == table.HeaderRow {
-				return t.headerStyle
+				return t.headerStyle.Align(align)
 			}
 			absRow := row + offset
 			isSelected := absRow == cursor
 			if styleFunc != nil {
-				return styleFunc(absRow, col, isSelected)
+				return styleFunc(absRow, col, isSelected).Align(align)
 			}
+
 			// Fallback: default style
 			s := lipgloss.NewStyle().Padding(0, 1)
 			if isSelected {
 				s = s.Bold(true)
 			}
-			return s
+			return s.Align(align)
 		})
 	if t.width > 0 {
 		lt = lt.Width(t.width)

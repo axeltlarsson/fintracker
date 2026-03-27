@@ -41,7 +41,7 @@ func expandHome(path string) string {
 		if err != nil {
 			return path
 		}
-		return filepath.Join(home, path[:2])
+		return filepath.Join(home, path[2:])
 	}
 	return path
 }

@@ -26,6 +26,7 @@ func (m Model) View() tea.View {
 	case listScreen:
 		content = m.styles.title.Render(appTitle) + "\n" +
 			m.table.View() + "\n" +
+			m.renderStatusLine() + "\n" +
 			m.styles.help.Render(m.help.View(m.keys))
 	case detailScreen:
 		header := m.styles.title.Render("fintracker — detail")
@@ -198,21 +199,51 @@ func sortedKeys(m map[string]finance.Öre) []string {
 	return keys
 }
 
-func (m Model) viewCategorySummaryScreen() tea.View {
-	var b strings.Builder
-	b.WriteString(m.styles.title.Render("Categories"))
+// renderStatusLine renders the contextual status bar between table and help.
+func (m Model) renderStatusLine() string {
+	var left, right string
 
-	keys := make([]string, 0, len(m.categorySummary))
-	for k := range m.categorySummary {
-		keys = append(keys, k)
+	// Left: filter state
+	if m.filterAccount == "" {
+		left = m.styles.muted.Render("All accounts")
+	} else {
+		// Find position in cycle
+		pos := 0
+		for i, a := range m.accounts {
+			if a == m.filterAccount {
+				pos = i + 1
+				break
+			}
+		}
+		left = m.styles.statusFilter.Render(
+			fmt.Sprintf("%s (%d/%d)", m.filterAccount, pos, len(m.accounts)),
+		)
 	}
-	sort.Strings(keys)
 
-	for _, category := range keys {
-		fmt.Fprintf(&b, " %-25s %12s\n", category, m.categorySummary[category])
+	// Right: transaction count
+	total := len(m.transactions)
+	visible := len(m.visibleIdx)
+	var msg string
+	if visible < total {
+		msg = fmt.Sprintf("%d of %d transactions", visible, total)
+	} else {
+		msg = fmt.Sprintf("%d transactions", total)
 	}
+	right = m.styles.muted.Render(msg)
 
-	b.WriteString("\n esc back\n")
+	// Middle: import status (if any)
+	middle := m.styles.statusMessage.Render(m.importStatus)
 
-	return tea.NewView(b.String())
+	// Layout: left -- middle -- right, padded to full width
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(middle) - 4
+	if gap < 0 {
+		gap = 1
+	}
+	leftGap := gap / 2
+	rightGap := gap - leftGap
+
+	return m.styles.statusBar.Width(m.width).Render(
+		left + strings.Repeat(" ", leftGap) + middle + strings.Repeat(" ", rightGap) + right,
+	)
+
 }

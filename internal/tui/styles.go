@@ -25,6 +25,10 @@ type styles struct {
 	prompt        lipgloss.Style
 	value         lipgloss.Style
 	warning       lipgloss.Style
+
+	statusBar     lipgloss.Style
+	statusFilter  lipgloss.Style
+	statusMessage lipgloss.Style
 }
 
 func newStyles(t Theme) styles {
@@ -48,7 +52,7 @@ func newStyles(t Theme) styles {
 
 		selectedRow: lipgloss.NewStyle().
 			Background(t.HighlightLow).
-			Foreground(t.Gold).
+			Foreground(t.Rose).
 			Bold(true),
 
 		category: lipgloss.NewStyle().
@@ -76,11 +80,13 @@ func newStyles(t Theme) styles {
 
 		tableHeader: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(t.Iris).
-			PaddingRight(3),
+			Foreground(t.Subtle).
+			PaddingRight(2).
+			PaddingLeft(2),
 
 		tableCell: lipgloss.NewStyle().
-			PaddingRight(3),
+			PaddingRight(2).
+			PaddingLeft(2),
 
 		prompt: lipgloss.NewStyle().
 			PaddingLeft(2),
@@ -91,6 +97,18 @@ func newStyles(t Theme) styles {
 		warning: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(t.Love),
+
+		statusBar: lipgloss.NewStyle().
+			Background(t.Surface).
+			PaddingLeft(2).
+			PaddingRight(2),
+
+		statusFilter: lipgloss.NewStyle().
+			Foreground(t.Iris).
+			Bold(true),
+
+		statusMessage: lipgloss.NewStyle().
+			Foreground(t.Gold),
 	}
 }
 
@@ -119,10 +137,10 @@ func newHelpStyles(t Theme) help.Styles {
 
 func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []int) TxnStyleFunc {
 	return func(row, col int, selected bool) lipgloss.Style {
-		base := lipgloss.NewStyle().Padding(0, 1)
+		base := s.tableCell
 
 		if selected {
-			base = base.Bold(true).Background(s.theme.HighlightLow)
+			base = base.Bold(true).Background(s.theme.HighlightLow).Foreground(s.theme.Rose)
 		}
 
 		if row < 0 || row >= len(idx) {
@@ -134,7 +152,7 @@ func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []in
 		switch col {
 		case colAmount: // Amount
 			if t.Amount >= 0 {
-				return base.Foreground(s.theme.Pine).Align(lipgloss.Right)
+				return base.Foreground(s.theme.Pine)
 			}
 			return base.Foreground(s.theme.Love).Align(lipgloss.Right)
 		case colCategory:
@@ -143,10 +161,6 @@ func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []in
 				return base.Foreground(s.theme.Muted).Italic(true)
 			}
 			return base.Foreground(s.theme.Foam).Italic(true)
-		}
-		if selected {
-			// TODO: use selectedRow style?
-			return base.Foreground(s.theme.Gold)
 		}
 		return base
 

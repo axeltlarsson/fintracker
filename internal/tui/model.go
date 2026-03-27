@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -90,7 +91,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		}
 	}
 
-	cols := buildDefaultColumns()
+	cols := buildCols()
 	visibleIdx := initialVisibleIdx(len(txns))
 	rows := buildRowsFromIdx(txns, visibleIdx)
 
@@ -407,6 +408,10 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.catInput.Focus()
 			return m, cmd
 
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
+			return m, nil
+
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 
@@ -420,11 +425,11 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 }
 
-func buildDefaultColumns() []TxnColumn {
+func buildCols() []TxnColumn {
 	return []TxnColumn{
 		{Title: "Date", Width: 12},
 		{Title: "Payee", Width: 25},
-		{Title: "Amount", Width: 14},
+		{Title: "Amount", Width: 14, Align: lipgloss.Right},
 		{Title: "Account", Width: 12},
 		{Title: "Category", Width: 18},
 	}
