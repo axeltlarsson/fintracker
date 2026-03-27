@@ -159,25 +159,83 @@ fintracker/
 **Feature:** proper theming with Rosé Pine palette (main, moon, dawn variants).
 **Go concepts:** functional options, config structs, embedding for theme inheritance, color profile detection.
 
-### Phase 13: Vim-style navigation
+### Phase 13: Search & filter
+**Feature:** `/` fuzzy search (text match, temporary), `f` structured filters (account, category, status facets, persistent), `F` clear all filters.
+**Go concepts:** string matching, state machines (filter mode), composable predicates, builder pattern for filter chains.
+**Design:**
+- `/` narrows visibleIdxs by substring match on payee + category + account. `esc` clears, `enter` locks filter.
+- `f` opens filter mode: `(a)ccount (c)ategory (u)ncategorized (d)ate range`. Filters shown as pills in status line. Multiple filters stack.
+- `F` clears all active filters (like Linear).
+- All filters compose through `refreshTable`: period → structured filters → text search → visibleIdxs.
+- Current `tab` account cycling is temporary — will be replaced by `f` → `a` once structured filters land.
+
+### Phase 14: Period & batch workflow
+**Feature:** monthly batch categorization workflow with period as a first-class concept.
+**Go concepts:** time.Time range filtering, custom types (DateRange), sort.Slice with multi-key comparisons.
+**Design:**
+- Period shown in title bar: "fintracker · March 2026"
+- `[` / `]` navigate prev/next month
+- Progress counter: "15/47 categorized"
+- Smart default on startup: auto-select latest period with uncategorized transactions
+- Sort: uncategorized transactions first (work queue at top), categorized sink below a visual divider
+- Period is global state — affects all views
+
+### Phase 15: Multi-view architecture
+**Feature:** `tab` switches between views: Transactions (list/categorize/detail) and Statistics (charts/KPIs).
+**Go concepts:** interface-based view abstraction, per-view state vs global state, the Model-per-view pattern in Bubble Tea.
+**Design:**
+- Views: Transactions (current functionality) and Statistics (spending breakdown, trends, budgets)
+- Period is global — switching views keeps the same period, data stays in sync
+- Each view has its own filter state and screen navigation
+- Current `screen` enum becomes per-view state
+- Architecture: `Model { transactions, period, activeView, txnView, statsView }`
+- Single source of truth (`m.transactions`) means categorizing in Transactions view is instantly reflected in Statistics
+
+### Phase 16: Statistics view
+**Feature:** spending analytics with charts and KPIs.
+**Go concepts:** text-based chart rendering, aggregate queries, formatting tables with computed columns.
+**Ideas:**
+- Category breakdown (bar chart or table with percentages)
+- Month-over-month spending comparison
+- Top payees by spend
+- Income vs expenses summary
+- Budget vs actual (if budgets are configured)
+
+### Phase 17: Vim-style navigation
 **Feature:** vim modes (normal, insert, command) in the TUI.
 **Go concepts:** state machines, dynamic key binding enable/disable, rune handling, Unicode.
 
-### Phase 14: Multiple bank format support
+### Phase 18: Multiple bank format support
 **Feature:** parse CSV from SEB, Swedbank, Nordea, ICA Banken.
 **Go concepts:** Strategy pattern via interfaces, factory functions, //go:embed for default configs.
 
-### Phase 15: HTTP & APIs
+### Phase 19: HTTP & APIs
 **Feature:** GoCardless integration or local HTTP API.
 **Go concepts:** net/http, http.Client, JSON, context with timeouts, middleware.
 
-### Phase 16: Configuration
+### Phase 20: Configuration
 **Feature:** config file for database path, bank formats, rules, theme, keybindings.
 **Go concepts:** //go:embed, config hierarchy (defaults → file → env → flags), XDG conventions.
 
-### Phase 17: Distribution
+### Phase 21: Distribution
 **Feature:** installable via Nix, goreleaser, go install.
 **Go concepts:** ldflags for version embedding, buildGoModule in flake.nix, goreleaser.
+
+### Key binding plan (end state)
+```
+tab          switch view (Transactions ↔ Statistics)
+/            fuzzy search (temporary text filter)
+f            structured filter (faceted, persistent)
+F            clear all filters
+[ / ]        prev / next period (month)
+enter        drill into detail
+esc          back / clear search
+c            categorize
+j/k          navigate
+g/G          top / bottom
+?            help toggle
+q            quit
+```
 
 ### Ongoing topics to weave in opportunistically
 
@@ -191,6 +249,7 @@ fintracker/
 - Channel patterns (fan-out/fan-in, pipelines)
 - sync package (Once, Pool, Map, atomics)
 - go generate
+- Category name normalization (case-insensitive dedup: "entertainment" == "Entertainment") — let Axel drive this one with minimal guidance
 
 ---
 
@@ -252,4 +311,38 @@ fintracker/
 - Fuzzy search/filter in the table
 - Color tuning (reduce Iris overuse, balance palette)
 - Status messages (import progress, errors) without bubbles list
+
+### Session 6 — UI polish + search (Phase 12 polish + Phase 13 start)
+**Date:** 2026-03-27
+**Covered:** Bug fixes, data structure refactor, UI polish, search implementation.
+
+**Bug fix — category not showing immediately:** Traced to value-type mutation bug: `visibleTxns` held copies of transactions, not references. Assigning category to the copy didn't affect `m.transactions`. Classic Go gotcha with value types in slices.
+
+**Data structure refactor — index slice pattern:** Replaced `visibleTxns []finance.Transaction` (copies) with `visibleIdx []int` (indices into `m.transactions`). Added `selectedTxn()` helper returning `*finance.Transaction` for direct mutation. Eliminated data duplication and the entire class of stale-copy bugs. This pattern became the foundation for all subsequent filtering work.
+
+**Color tuning:** Table headers from Iris → Subtle (less visual noise). Selected row: HighlightLow + Rose. Iris reserved for active filter indicators. Gold for transient status messages. Follows Rosé Pine palette roles.
+
+**Status line:** Added contextual status bar with three fixed-width columns (statusLeft, statusMiddle, statusRight). Shows filter state (left), search/import status (middle), transaction count (right). Each column carries its own Background(Surface) to avoid ANSI nesting issues. Learned the hard way that gap-calculation layout with ANSI strings causes jumping — fixed-width columns solve it.
+
+**Table alignment:** Added `Align lipgloss.Position` field to `TxnColumn`. Table View reads alignment from column definition — domain knowledge stays in `buildCols`, generic component respects it. "Data, not code" principle.
+
+**Help toggle:** Wired `?` to toggle `m.help.ShowAll`. Added Filter and Search to ShortHelp. Noted that full help expanding inline is awkward (pushes layout around) — future improvement: help as full screen.
+
+**Search — controlled component pattern:** Built `/` fuzzy search. Key architectural decision: TxnTable owns filtering logic (`SetFilter`, `ClearFilter`, `applyFilter`, `matchRow`) but NOT the textinput. Model owns the textinput and calls `table.SetFilter(query)`. This is the "controlled component" pattern — table filters on string data without knowing where the query comes from. `matchRow` is generic (matches query against all cells), no Transaction domain knowledge in the table. TxnTable's `filtered []int` indices (same pattern as `visibleIdx`) map display positions to original row indices. `Cursor()` maps through `filtered` transparently.
+
+**Cleanup:** Deleted dead code: `item.go` (unused TransactionItem from bubbles/list era), `viewCategorySummaryScreen`, `categorySummaryScreen` constant. Fixed `expandHome` bug (path[:2] → path[2:]).
+
+**Layout:** Fixed-height table rendering (pad with newlines when fewer rows than allocated height) to prevent layout jumping during search. Named layout budget constants (titleHeight, tableBorderH, statusLineH, helpH) replacing magic numbers.
+
+**Roadmap updates:** Expanded phases 13–21 with detailed design for search/filter, period/batch workflow, multi-view architecture, statistics view. Added key binding plan (end state). Core insight: period (monthly batch) is a first-class concept, not just a filter. `tab` will switch views (Transactions ↔ Statistics), `f` for structured filters (Linear-style), `/` for fuzzy search.
+
+**Concepts practiced:** Value vs pointer semantics in slices, index slice pattern, controlled vs uncontrolled components, ANSI nesting pitfalls, fixed-width terminal layout, separation of filtering logic from input management, design token discipline (views consume styles, never construct them).
+
+**Remaining polish:**
+- Rename for clarity: Model's `visibleIdx` → `filteredTxns`, TxnTable's `filtered` → `searchIdx`, `SetFilter`/`ClearFilter` → `SetSearch`/`ClearSearch`
+- Help as full screen (instead of inline toggle)
+- Search input still jumps slightly (status line layout needs more tuning)
+- `ctrl-d`/`ctrl-u` are swapped (PageUp/PageDown reversed from vim convention)
+
+**Next:** Phase 13 (structured filters with `f` key) or Phase 14 (period/batch workflow), or tackle remaining polish.
 
