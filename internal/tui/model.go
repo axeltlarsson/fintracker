@@ -318,7 +318,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Layout budget - each element's fixed height
 		const (
-			titleH       = 2 // title text + margin bottom
+			titleH       = 3 // title text + margin bottom
 			tableBorderH = 3 // header row + top/bottom border
 			statusLineH  = 1
 			helpH        = 2 // help text + margin top

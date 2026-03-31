@@ -28,7 +28,7 @@ type TxnTable struct {
 	rows        [][]string
 	cursor      int
 	offset      int // first visible row
-	height      int // number of visible rows
+	visibleRows int
 	width       int
 	focused     bool
 	styleFunc   TxnStyleFunc
@@ -57,8 +57,8 @@ func defaultTxnTableKeyMap() TxnTableKeyMap {
 	return TxnTableKeyMap{
 		Up:       key.NewBinding(key.WithKeys("up", "k")),
 		Down:     key.NewBinding(key.WithKeys("down", "j")),
-		PageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl-d")),
-		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl-u")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl+u")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl+d")),
 		Top:      key.NewBinding(key.WithKeys("home", "g")),
 		Bottom:   key.NewBinding(key.WithKeys("end", "G")),
 	}
@@ -83,7 +83,7 @@ func WithTxnRows(rows [][]string) TxnTableOption {
 }
 
 func WithTxnHeight(h int) TxnTableOption {
-	return func(t *TxnTable) { t.height = h }
+	return func(t *TxnTable) { t.visibleRows = h }
 }
 
 func WithTxnFocused(f bool) TxnTableOption {
@@ -108,8 +108,8 @@ func WithTxnHeaderStyle(s lipgloss.Style) TxnTableOption {
 
 func NewTxnTable(opts ...TxnTableOption) TxnTable {
 	t := TxnTable{
-		height: 20,
-		keyMap: defaultTxnTableKeyMap(),
+		visibleRows: 20,
+		keyMap:      defaultTxnTableKeyMap(),
 	}
 	for _, opt := range opts {
 		opt(&t)
@@ -146,7 +146,7 @@ func (t *TxnTable) SetRows(rows [][]string) {
 }
 
 func (t *TxnTable) SetColumns(cols []TxnColumn) { t.cols = cols }
-func (t *TxnTable) SetHeight(h int)             { t.height = h; t.clampOffset() }
+func (t *TxnTable) SetHeight(h int)             { t.visibleRows = h; t.clampOffset() }
 func (t *TxnTable) SetWidth(w int)              { t.width = w }
 func (t *TxnTable) SetStyleFunc(f TxnStyleFunc) { t.styleFunc = f }
 func (t *TxnTable) Focus()                      { t.focused = true }
@@ -198,8 +198,8 @@ func (t *TxnTable) MoveUp(n int) {
 func (t *TxnTable) MoveDown(n int) {
 	t.cursor = clamp(t.cursor+n, 0, max(len(t.filtered)-1, 0))
 	// Scroll down if cursor is below the visible window
-	if t.cursor >= t.offset+t.height {
-		t.offset = t.cursor - t.height + 1
+	if t.cursor >= t.offset+t.visibleRows {
+		t.offset = t.cursor - t.visibleRows + 1
 	}
 }
 
@@ -214,12 +214,12 @@ func (t *TxnTable) GotoBottom() {
 }
 
 func (t *TxnTable) clampOffset() {
-	maxOffset := max(len(t.filtered)-t.height, 0)
+	maxOffset := max(len(t.filtered)-t.visibleRows, 0)
 	t.offset = clamp(t.offset, 0, maxOffset)
 	// Ensure cursor is still visible after offset clamp
 	t.offset = min(t.offset, t.cursor)
-	if t.cursor >= t.offset+t.height && t.height > 0 {
-		t.offset = t.cursor - t.height + 1
+	if t.cursor >= t.offset+t.visibleRows && t.visibleRows > 0 {
+		t.offset = t.cursor - t.visibleRows + 1
 	}
 }
 
@@ -238,9 +238,9 @@ func (t TxnTable) Update(msg tea.Msg) (TxnTable, tea.Cmd) {
 		case key.Matches(msg, t.keyMap.Down):
 			t.MoveDown(1)
 		case key.Matches(msg, t.keyMap.PageUp):
-			t.MoveUp(t.height)
+			t.MoveUp(t.visibleRows)
 		case key.Matches(msg, t.keyMap.PageDown):
-			t.MoveDown(t.height)
+			t.MoveDown(t.visibleRows)
 		case key.Matches(msg, t.keyMap.Top):
 			t.GotoTop()
 		case key.Matches(msg, t.keyMap.Bottom):
@@ -256,7 +256,7 @@ func (t TxnTable) View() string {
 	}
 
 	// Compute visible window
-	end := min(t.offset+t.height, len(t.filtered))
+	end := min(t.offset+t.visibleRows, len(t.filtered))
 	visible := make([][]string, 0, end-t.offset)
 	for _, idx := range t.filtered[t.offset:end] {
 		visible = append(visible, t.rows[idx])
@@ -308,12 +308,9 @@ func (t TxnTable) View() string {
 	lt = lt.Border(t.border).BorderStyle(t.borderStyle)
 
 	rendered := lt.Render()
-	renderedHeight := lipgloss.Height(rendered)
-	targetHeight := t.height + 3 // rows + header + top/bottom border
-	if renderedHeight < targetHeight {
-		return rendered + strings.Repeat("\n", targetHeight-renderedHeight)
-	}
-	return rendered
+	// let table take up full height to prevent shrinking and status bar jumping when filtering rows
+	targetHeight := t.visibleRows + 3 // rows + header + top/bottom border
+	return lipgloss.PlaceVertical(targetHeight, lipgloss.Top, rendered)
 
 }
 

@@ -24,10 +24,13 @@ func (m Model) View() tea.View {
 
 	switch m.screen {
 	case listScreen:
-		content = m.styles.title.Render(appTitle) + "\n" +
-			m.renderStatusLine() + "\n" +
-			m.table.View() + "\n" +
-			m.styles.help.Render(m.help.View(m.keys))
+		content = strings.Join(
+			[]string{
+				m.styles.title.Render(appTitle),
+				m.styles.help.Render(m.help.View(m.keys)),
+				m.table.View(),
+				m.renderStatusLine(),
+			}, "\n")
 	case detailScreen:
 		header := m.styles.title.Render("fintracker — detail")
 		body := m.viewport.View()
