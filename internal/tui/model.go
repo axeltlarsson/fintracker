@@ -37,7 +37,7 @@ type ImportSpec struct {
 type Model struct {
 	// Data
 	transactions    []finance.Transaction
-	visibleIdx      []int // indices into transactions
+	filteredTxns    []int // indices into transactions
 	totalBalance    finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
@@ -130,7 +130,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 	return Model{
 		// Data
 		transactions:    txns,
-		visibleIdx:      visibleIdx,
+		filteredTxns:    visibleIdx,
 		totalBalance:    finance.CalculateBalance(txns),
 		accountSummary:  buildAccountSummary(txns),
 		categorySummary: buildCategorySummary(txns),
@@ -308,7 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.visibleIdx))
+		m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.filteredTxns))
 		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
@@ -462,7 +462,7 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searching = false
 			m.searchInput.Blur()
 			m.searchInput.SetValue("")
-			m.table.ClearFilter()
+			m.table.ClearSearch()
 			return m, nil
 		case key.Matches(msg, m.keys.Enter):
 			m.searching = false
@@ -475,7 +475,7 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
 	// refresh table on every keystroke
-	m.table.SetFilter(m.searchInput.Value())
+	m.table.SetSearch(m.searchInput.Value())
 	return m, cmd
 }
 
@@ -510,21 +510,21 @@ func buildRowsFromIdx(txns []finance.Transaction, idx []int) [][]string {
 
 // selectedTxn returns a pointer to the transactions under the cursor
 func (m *Model) selectedTxn() *finance.Transaction {
-	if len(m.visibleIdx) == 0 {
+	if len(m.filteredTxns) == 0 {
 		return nil
 	}
-	return &m.transactions[m.visibleIdx[m.table.Cursor()]]
+	return &m.transactions[m.filteredTxns[m.table.Cursor()]]
 }
 func (m *Model) refreshTable() {
-	m.visibleIdx = m.visibleIdx[:0]
+	m.filteredTxns = m.filteredTxns[:0]
 	for i, t := range m.transactions {
 		if m.filterAccount != "" && t.Account != m.filterAccount {
 			continue
 		}
-		m.visibleIdx = append(m.visibleIdx, i)
+		m.filteredTxns = append(m.filteredTxns, i)
 	}
-	m.table.SetRows(buildRowsFromIdx(m.transactions, m.visibleIdx))
-	m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.visibleIdx))
+	m.table.SetRows(buildRowsFromIdx(m.transactions, m.filteredTxns))
+	m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.filteredTxns))
 }
 
 func (m Model) nextAccount() string {

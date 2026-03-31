@@ -232,8 +232,8 @@ func (m Model) renderStatusLine() string {
 
 	// Right: transaction count
 	total := len(m.transactions)
-	filtered := m.table.FilteredCount()
-	structFiltered := len(m.visibleIdx)
+	filtered := m.table.SearchedCount()
+	structFiltered := len(m.filteredTxns)
 	var msg string
 	if filtered < structFiltered {
 		msg = fmt.Sprintf("%d of %d transactions", filtered, total)

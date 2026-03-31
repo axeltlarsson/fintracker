@@ -38,9 +38,9 @@ type TxnTable struct {
 	headerStyle lipgloss.Style
 	// no selectedRow style?
 
-	// Filtering
-	query    string
-	filtered []int // indices into t.rows that match the query
+	// Searching
+	query     string
+	searchIdx []int // indices into t.rows that match the query
 
 }
 
@@ -64,10 +64,10 @@ func defaultTxnTableKeyMap() TxnTableKeyMap {
 	}
 }
 
-func (t *TxnTable) resetFiltered() {
-	t.filtered = make([]int, len(t.rows))
-	for i := range t.filtered {
-		t.filtered[i] = i
+func (t *TxnTable) resetSearchIdx() {
+	t.searchIdx = make([]int, len(t.rows))
+	for i := range t.searchIdx {
+		t.searchIdx[i] = i
 	}
 }
 
@@ -114,33 +114,33 @@ func NewTxnTable(opts ...TxnTableOption) TxnTable {
 	for _, opt := range opts {
 		opt(&t)
 	}
-	t.resetFiltered()
+	t.resetSearchIdx()
 	return t
 }
 
 // --- State access ---
 
 func (t TxnTable) Cursor() int {
-	if len(t.filtered) == 0 {
+	if len(t.searchIdx) == 0 {
 		return 0
 	}
-	return t.filtered[t.cursor]
+	return t.searchIdx[t.cursor]
 
 }
 func (t TxnTable) SelectedRow() []string {
-	if t.cursor < 0 || t.cursor >= len(t.filtered) {
+	if t.cursor < 0 || t.cursor >= len(t.searchIdx) {
 		return nil
 	}
-	return t.rows[t.filtered[t.cursor]]
+	return t.rows[t.searchIdx[t.cursor]]
 }
 
 // --- State mutation ---
 
 func (t *TxnTable) SetRows(rows [][]string) {
 	t.rows = rows
-	t.resetFiltered()
-	if t.cursor >= len(t.filtered) {
-		t.cursor = max(len(t.filtered)-1, 0)
+	t.resetSearchIdx()
+	if t.cursor >= len(t.searchIdx) {
+		t.cursor = max(len(t.searchIdx)-1, 0)
 	}
 	t.clampOffset()
 }
@@ -152,28 +152,28 @@ func (t *TxnTable) SetStyleFunc(f TxnStyleFunc) { t.styleFunc = f }
 func (t *TxnTable) Focus()                      { t.focused = true }
 func (t *TxnTable) Blur()                       { t.focused = false }
 
-func (t *TxnTable) SetFilter(query string) {
+func (t *TxnTable) SetSearch(query string) {
 	t.query = strings.ToLower(query)
 	t.applyFilter()
 }
 
-func (t *TxnTable) ClearFilter() {
+func (t *TxnTable) ClearSearch() {
 	t.query = ""
-	t.resetFiltered()
-	t.cursor = clamp(t.cursor, 0, max(len(t.filtered)-1, 0))
+	t.resetSearchIdx()
+	t.cursor = clamp(t.cursor, 0, max(len(t.searchIdx)-1, 0))
 	t.clampOffset()
 }
 
-func (t TxnTable) FilteredCount() int { return len(t.filtered) }
+func (t TxnTable) SearchedCount() int { return len(t.searchIdx) }
 
 func (t *TxnTable) applyFilter() {
-	t.filtered = t.filtered[:0]
+	t.searchIdx = t.searchIdx[:0]
 	for i, row := range t.rows {
 		if t.query == "" || matchRow(row, t.query) {
-			t.filtered = append(t.filtered, i)
+			t.searchIdx = append(t.searchIdx, i)
 		}
 	}
-	t.cursor = clamp(t.cursor, 0, max(len(t.filtered)-1, 0))
+	t.cursor = clamp(t.cursor, 0, max(len(t.searchIdx)-1, 0))
 	t.clampOffset()
 }
 
@@ -188,7 +188,7 @@ func matchRow(row []string, query string) bool {
 
 // --  Navigation ---
 func (t *TxnTable) MoveUp(n int) {
-	t.cursor = clamp(t.cursor-n, 0, max(len(t.filtered)-1, 0))
+	t.cursor = clamp(t.cursor-n, 0, max(len(t.searchIdx)-1, 0))
 	// scroll up if cursor is above the visible window
 	if t.cursor < t.offset {
 		t.offset = t.cursor
@@ -196,7 +196,7 @@ func (t *TxnTable) MoveUp(n int) {
 }
 
 func (t *TxnTable) MoveDown(n int) {
-	t.cursor = clamp(t.cursor+n, 0, max(len(t.filtered)-1, 0))
+	t.cursor = clamp(t.cursor+n, 0, max(len(t.searchIdx)-1, 0))
 	// Scroll down if cursor is below the visible window
 	if t.cursor >= t.offset+t.visibleRows {
 		t.offset = t.cursor - t.visibleRows + 1
@@ -209,12 +209,12 @@ func (t *TxnTable) GotoTop() {
 }
 
 func (t *TxnTable) GotoBottom() {
-	t.cursor = max(len(t.filtered)-1, 0)
+	t.cursor = max(len(t.searchIdx)-1, 0)
 	t.clampOffset()
 }
 
 func (t *TxnTable) clampOffset() {
-	maxOffset := max(len(t.filtered)-t.visibleRows, 0)
+	maxOffset := max(len(t.searchIdx)-t.visibleRows, 0)
 	t.offset = clamp(t.offset, 0, maxOffset)
 	// Ensure cursor is still visible after offset clamp
 	t.offset = min(t.offset, t.cursor)
@@ -256,9 +256,9 @@ func (t TxnTable) View() string {
 	}
 
 	// Compute visible window
-	end := min(t.offset+t.visibleRows, len(t.filtered))
+	end := min(t.offset+t.visibleRows, len(t.searchIdx))
 	visible := make([][]string, 0, end-t.offset)
-	for _, idx := range t.filtered[t.offset:end] {
+	for _, idx := range t.searchIdx[t.offset:end] {
 		visible = append(visible, t.rows[idx])
 	}
 
@@ -276,7 +276,7 @@ func (t TxnTable) View() string {
 	offset := t.offset
 	cursor := t.cursor
 	styleFunc := t.styleFunc
-	filtered := t.filtered
+	filtered := t.searchIdx
 
 	lt := table.New().
 		Headers(headers...).

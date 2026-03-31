@@ -106,11 +106,11 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 - [x] errgroup (golang.org/x/sync/errgroup)
 - [ ] net/http (client and server)
 - [ ] JSON encoding/decoding
-- [ ] Custom error types (errors.As, errors.Is)
+- [ ] Custom error types (errors.As, errors.Is) ← Phase 13
 - [ ] Benchmarking (go test -bench, pprof)
 - [ ] Build tags
 - [ ] go generate
-- [ ] //go:embed
+- [ ] //go:embed ← Phase 14
 - [ ] Reflection (struct tags under the hood)
 
 ---
@@ -159,78 +159,108 @@ fintracker/
 **Feature:** proper theming with Rosé Pine palette (main, moon, dawn variants).
 **Go concepts:** functional options, config structs, embedding for theme inheritance, color profile detection.
 
-### Phase 13: Search & filter
-**Feature:** `/` fuzzy search (text match, temporary), `f` structured filters (account, category, status facets, persistent), `F` clear all filters.
-**Go concepts:** string matching, state machines (filter mode), composable predicates, builder pattern for filter chains.
+### Phase 13: Accounting model (double-entry foundation)
+**Feature:** Core domain types for a proper journal-based model — `Account`, `Posting`, `Entry` (journal transaction), `Validate()`. Replaces the current flat `Transaction` model over subsequent phases. See `ACCOUNTING_ROADMAP.md` for full design.
+**Go concepts:** custom error types (`errors.As`/`errors.Is`), TDD for pure business logic, named types for type safety, table-driven tests as specification.
 **Design:**
-- `/` narrows visibleIdxs by substring match on payee + category + account. `esc` clears, `enter` locks filter.
-- `f` opens filter mode: `(a)ccount (c)ategory (u)ncategorized (d)ate range`. Filters shown as pills in status line. Multiple filters stack.
-- `F` clears all active filters (like Linear).
-- All filters compose through `refreshTable`: period → structured filters → text search → visibleIdxs.
-- Current `tab` account cycling is temporary — will be replaced by `f` → `a` once structured filters land.
+- `Account` — typed, hierarchical colon-delimited paths (`Assets:Checking:SEB`, `Expenses:Food:Groceries`). Type: Assets | Liabilities | Income | Expenses | Equity.
+- `Posting` — atomic unit: one account, one `Öre` amount (signed), one currency.
+- `Entry` — group of `Posting`s that must sum to zero per currency. Renamed to `Transaction` once flat model is retired.
+- `Validate()` — enforces the double-entry invariant: `len(Postings) >= 2`, sum per currency == 0.
+- New files: `internal/finance/account.go`, `internal/finance/ledger.go`.
+- Approach: red-green TDD — write tests first, implement to pass.
+**Note on naming:** `Entry` is used during migration to avoid conflict with the existing flat `Transaction`. Will be renamed `Transaction` when the old model is retired in Phase 14.
 
-### Phase 14: Period & batch workflow
-**Feature:** monthly batch categorization workflow with period as a first-class concept.
-**Go concepts:** time.Time range filtering, custom types (DateRange), sort.Slice with multi-key comparisons.
+### Phase 14: Import pipeline v2
+**Feature:** CSV → `Entry`+`Posting` pairs. `payee_rules` table in SQLite replaces YAML categorization rules. Skeleton transaction generation: two postings per import row (source account + suggested expense account). Review queue: imported entries with `cleared=false`.
+**Go concepts:** SQL schema migrations, strategy pattern for bank format parsers, `//go:embed` for default payee rules or schema SQL.
+**Design:**
+- `payee_rules` table: `pattern` (regex), `normalized_payee`, `default_account_id`, `priority`.
+- Import: apply rules in priority order → set payee + pre-fill account on postings. Unmatched → review queue.
+- `cleared=false` is the "needs review" signal — replaces the old category=="" heuristic.
+- Migrate existing YAML rules into `payee_rules` table as part of this phase.
+
+### Phase 15: Review TUI
+**Feature:** Interactive review of uncleared entries. Account picker (hierarchical), memo input, tag toggler, split posting editor (add postings, verify sum=0), mark cleared on confirm.
+**Go concepts:** complex multi-step state machines, custom input components, constraint enforcement in UI.
+
+### Phase 16: Period & batch workflow
+**Feature:** Monthly batch review built on `cleared` flag. Period as first-class concept.
+**Go concepts:** `time.Time` range filtering, custom `DateRange` type, `sort.Slice` with multi-key comparisons.
 **Design:**
 - Period shown in title bar: "fintracker · March 2026"
 - `[` / `]` navigate prev/next month
-- Progress counter: "15/47 categorized"
-- Smart default on startup: auto-select latest period with uncategorized transactions
-- Sort: uncategorized transactions first (work queue at top), categorized sink below a visual divider
+- Progress counter: "15/47 cleared"
+- Smart default on startup: auto-select latest period with uncleared entries
+- Sort: uncleared entries first (work queue), cleared sink below visual divider
 - Period is global state — affects all views
 
-### Phase 15: Multi-view architecture
-**Feature:** `tab` switches between views: Transactions (list/categorize/detail) and Statistics (charts/KPIs).
-**Go concepts:** interface-based view abstraction, per-view state vs global state, the Model-per-view pattern in Bubble Tea.
+### Phase 17: Structured filters
+**Feature:** `f` opens filter mode with account path prefix matching, tag filter, cleared/uncleared status, date range. `F` clears all filters.
+**Go concepts:** trie or prefix matching for account paths, composable predicates, builder pattern for filter chains.
 **Design:**
-- Views: Transactions (current functionality) and Statistics (spending breakdown, trends, budgets)
-- Period is global — switching views keeps the same period, data stays in sync
+- `f` → `(a)ccount (t)ag (u)ncleared (d)ate range`. Filters shown as pills in status bar. Multiple filters stack.
+- Account filter uses prefix match: `Expenses:Food` matches all subaccounts.
+- All filters compose through `refreshTable`: period → structured filters → text search → `filteredTxns`.
+- `/` fuzzy search (already implemented) remains for quick text matching.
+
+### Phase 18: Multi-view architecture
+**Feature:** `tab` switches between views: Transactions (review/detail) and Reports (charts/KPIs).
+**Go concepts:** interface-based view abstraction, per-view state vs global state, Model-per-view pattern in Bubble Tea.
+**Design:**
+- Period is global — switching views keeps the same period
 - Each view has its own filter state and screen navigation
-- Current `screen` enum becomes per-view state
-- Architecture: `Model { transactions, period, activeView, txnView, statsView }`
-- Single source of truth (`m.transactions`) means categorizing in Transactions view is instantly reflected in Statistics
+- Architecture: `Model { entries, period, activeView, txnView, reportsView }`
+- Single source of truth means clearing in Transactions view is instantly reflected in Reports
 
-### Phase 16: Statistics view
-**Feature:** spending analytics with charts and KPIs.
-**Go concepts:** text-based chart rendering, aggregate queries, formatting tables with computed columns.
+### Phase 19: Statistics & reporting
+**Feature:** Spending analytics built on the accounting model.
+**Go concepts:** aggregate SQL queries, text-based chart rendering, formatting tables with computed columns.
 **Ideas:**
-- Category breakdown (bar chart or table with percentages)
-- Month-over-month spending comparison
+- Balance by account (and subtree: `Expenses:Food` total)
+- Spending by tag (trip totals across account boundaries)
+- Month-over-month comparison
+- Net worth over time (Assets − Liabilities)
 - Top payees by spend
-- Income vs expenses summary
-- Budget vs actual (if budgets are configured)
 
-### Phase 17: Vim-style navigation
-**Feature:** vim modes (normal, insert, command) in the TUI.
-**Go concepts:** state machines, dynamic key binding enable/disable, rune handling, Unicode.
+### Phase 20: Balance assertions
+**Feature:** `fintracker verify` — check computed account balances against known bank statement values.
+**Go concepts:** custom error types, accumulator pattern, CLI subcommands.
+**Design:** `balance_assertions` table: `account_id`, `date`, `expected`. `verify` checks each assertion against summed postings.
 
-### Phase 18: Multiple bank format support
+### Phase 21: Journal export
+**Feature:** `fintracker export --month 2026-03` — write cleared entries to hledger-compatible journal format.
+**Go concepts:** `io.Writer` for output abstraction, text formatting, CLI flags.
+**Format:** hledger journal (`2026-03-10 * ICA Maxi \n  Expenses:Food:Groceries  890 SEK\n  Liabilities:Creditcard:SEB`).
+
+### Phase 22: Multiple bank format support
 **Feature:** parse CSV from SEB, Swedbank, Nordea, ICA Banken.
-**Go concepts:** Strategy pattern via interfaces, factory functions, //go:embed for default configs.
+**Go concepts:** strategy pattern via interfaces, factory functions, `//go:embed` for default configs.
 
-### Phase 19: HTTP & APIs
+### Phase 23: HTTP & APIs
 **Feature:** GoCardless integration or local HTTP API.
-**Go concepts:** net/http, http.Client, JSON, context with timeouts, middleware.
+**Go concepts:** `net/http`, `http.Client`, JSON, context with timeouts, middleware.
 
-### Phase 20: Configuration
+### Phase 24: Configuration
 **Feature:** config file for database path, bank formats, rules, theme, keybindings.
-**Go concepts:** //go:embed, config hierarchy (defaults → file → env → flags), XDG conventions.
+**Go concepts:** `//go:embed`, config hierarchy (defaults → file → env → flags), XDG conventions.
 
-### Phase 21: Distribution
-**Feature:** installable via Nix, goreleaser, go install.
-**Go concepts:** ldflags for version embedding, buildGoModule in flake.nix, goreleaser.
+### Phase 25: Distribution
+**Feature:** installable via Nix, goreleaser, `go install`.
+**Go concepts:** ldflags for version embedding, `buildGoModule` in flake.nix, goreleaser.
 
 ### Key binding plan (end state)
 ```
-tab          switch view (Transactions ↔ Statistics)
-/            fuzzy search (temporary text filter)
-f            structured filter (faceted, persistent)
+tab          switch view (Transactions ↔ Reports)
+/            fuzzy search (text filter)
+f            structured filter (account path, tag, cleared status)
 F            clear all filters
 [ / ]        prev / next period (month)
-enter        drill into detail
+enter        drill into detail / review entry
 esc          back / clear search
-c            categorize
+c            categorize / confirm posting account
+m            add/edit memo
+t            toggle tag
 j/k          navigate
 g/G          top / bottom
 ?            help toggle
@@ -239,7 +269,6 @@ q            quit
 
 ### Ongoing topics to weave in opportunistically
 
-- Custom error types (errors.As, errors.Is)
 - Generics (utility functions, type constraints)
 - Benchmarking (go test -bench, pprof)
 - Linting (golangci-lint, staticcheck, exhaustive)
@@ -249,7 +278,7 @@ q            quit
 - Channel patterns (fan-out/fan-in, pipelines)
 - sync package (Once, Pool, Map, atomics)
 - go generate
-- Category name normalization (case-insensitive dedup: "entertainment" == "Entertainment") — let Axel drive this one with minimal guidance
+- Payee normalization rules (migrate from YAML to DB-backed payee_rules)
 
 ---
 
