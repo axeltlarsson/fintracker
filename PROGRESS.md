@@ -367,11 +367,30 @@ q            quit
 
 **Concepts practiced:** Value vs pointer semantics in slices, index slice pattern, controlled vs uncontrolled components, ANSI nesting pitfalls, fixed-width terminal layout, separation of filtering logic from input management, design token discipline (views consume styles, never construct them).
 
-**Remaining polish:**
-- Rename for clarity: Model's `visibleIdx` → `filteredTxns`, TxnTable's `filtered` → `searchIdx`, `SetFilter`/`ClearFilter` → `SetSearch`/`ClearSearch`
+**Remaining polish (carried forward):**
 - Help as full screen (instead of inline toggle)
 - Search input still jumps slightly (status line layout needs more tuning)
-- `ctrl-d`/`ctrl-u` are swapped (PageUp/PageDown reversed from vim convention)
 
-**Next:** Phase 13 (structured filters with `f` key) or Phase 14 (period/batch workflow), or tackle remaining polish.
+### Session 7 — rename + accounting model foundations (Phase 13 start)
+**Date:** 2026-04-01
+**Covered:** Naming cleanup, accounting roadmap planning, and first TDD cycle for the double-entry model.
+
+**Rename:** `visibleIdx` → `filteredTxns` (Model field), `filtered` → `searchIdx` (TxnTable field), `SetFilter`/`ClearFilter` → `SetSearch`/`ClearSearch`, `FilteredCount` → `SearchedCount`. Pure mechanical rename — no logic changes. Used gopls LSP rename, verified with `go build ./...`.
+
+**ACCOUNTING_ROADMAP.md:** Axel added a detailed accounting model design doc (double-entry bookkeeping: Account hierarchy, Posting, Transaction/Entry, Tags, payee_rules, balance assertions, journal export). Analysed fit with existing codebase and agreed on:
+- Use `Öre` (not bare `int64`) for `Posting.Amount` — keeps type safety
+- Roadmap phases 13–21 rewritten around the accounting model (see updated roadmap above)
+- `cleared` flag (from accounting model) unifies with the old "batch review" concept from Phase 14
+- YAML categorization rules will be migrated to `payee_rules` table in DB
+
+**Phase 13 — TDD, core accounting types:**
+- `internal/finance/ledger.go` — `Entry` (future `Transaction`), `Posting`, `Validate()`
+- `internal/finance/account.go` — `Account`, `AccountType` constants, `Name()`/`Parent()`/`Depth()` methods
+- Tests in `ledger_test.go` and `account_test.go` — full red-green cycle, all passing
+- `Validate()` uses map accumulator `map[string]Öre` — same pattern as `buildAccountSummary`, now the canonical Go idiom for groupBy+fold
+- `Parent()` on a root account (`"Equity"`) returns `""` for free via `strings.Join(s[:0], ":")` — zero value covers the edge case
+
+**Concepts practiced:** TDD red-green cycle, pure function testing as specification, named types for type safety (`Öre` vs `int64`), map accumulator pattern, `strings.Split`/`Join` for path manipulation, zero value correctness.
+
+**Next:** Phase 13 continues — DB schema migration: `accounts` table + new `transactions`/`postings` tables in `internal/store/store.go`. Will cover SQL migrations in Go (schema versioning with `PRAGMA user_version` or a migrations table).
 
