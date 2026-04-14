@@ -394,3 +394,25 @@ q            quit
 
 **Next:** Phase 13 continues — DB schema migration: `accounts` table + new `transactions`/`postings` tables in `internal/store/store.go`. Will cover SQL migrations in Go (schema versioning with `PRAGMA user_version` or a migrations table).
 
+### Session 8 — schema migrations + store methods (Phase 13 continued)
+**Date:** 2026-04-13 to 2026-04-14
+**Covered:** Schema migration system and store layer for the double-entry model.
+
+**Migration system:** Replaced inline `CREATE TABLE IF NOT EXISTS` with a versioned migration runner using `PRAGMA user_version`. Migrations are a `[]func(*sql.Tx) error` slice — index is version number, each runs in its own transaction. `NewStore` calls `migrate(db)` which reads current version and runs pending migrations in order. Design discussion: `PRAGMA user_version` (SQLite-specific, simple) vs migrations table (portable, more flexible) — chose the former for an embedded SQLite app.
+
+**Migration 1→2:** Added `accounts`, `entries`, `postings`, and `entry_tags` tables. Design decisions:
+- String paths for account hierarchy (`Assets:Checking:SEB`) over adjacency list — simpler queries (`LIKE 'Expenses:%'`), matches hledger notation, Go code already works with `strings.Split`. Tradeoff: no referential integrity on parent segments, but enforced in Go layer.
+- `entry_tags` junction table over JSON array in TEXT column — normalized, queryable, idiomatic relational modeling.
+- `ON DELETE CASCADE` for postings/tags (aggregate root: entry owns them), `ON DELETE RESTRICT` for accounts (independent existence).
+- `cleared INTEGER` — SQLite has no boolean type, 0/1 convention.
+- Composite primary key `(entry_id, tag)` on `entry_tags` — no synthetic ID needed, prevents duplicate tags, free unique index.
+
+**Store methods:**
+- `InsertAccount` / `LoadAccounts` — straightforward CRUD. `*time.Time` for nullable dates maps to SQL NULL automatically. `ORDER BY path` naturally groups parent before children.
+- `InsertEntry` — coordinates three inserts (entry, postings, tags) in one `sql.Tx`. Calls `Validate()` before touching the DB — domain invariant enforced at store boundary. Prepared statement for postings (amortized), inline exec for tags.
+- `LoadEntries` — map-assemble pattern: three independent queries (entries, postings, tags), assemble in Go via `map[int64]*finance.Entry`. Pointer values in map so `append` to Postings/Tags mutates the right entry. `entryOrder []int64` preserves query ordering since maps are unordered.
+
+**Concepts practiced:** `PRAGMA user_version` for schema versioning, migration-per-transaction pattern, `defer tx.Rollback()` as no-op after commit, `sql.Stmt` vs `sql.Result` (Close semantics), `sql.Rows` resource lifecycle, map-assemble pattern for avoiding complex JOINs, aggregate root in DB design (CASCADE vs RESTRICT), `defer` evaluation semantics (receiver captured at defer-time, not at function exit).
+
+**Next:** Phase 13 wrap-up — potentially add `UpdateEntry`, test edge cases (duplicate account path, foreign key violation on bad account_id). Then Phase 14: import pipeline v2 (CSV → Entry+Posting pairs, payee_rules table).
+
