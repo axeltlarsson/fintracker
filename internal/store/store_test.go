@@ -141,3 +141,103 @@ func TestUpsertAndLoad(t *testing.T) {
 	}
 
 }
+
+func TestInsertAndLoadAccount(t *testing.T) {
+	s := newTestStore(t)
+
+	acc := finance.Account{
+		Path:     "Assets:Bank:SEB",
+		Type:     finance.Assets,
+		Currency: "SEK",
+	}
+
+	id, err := s.InsertAccount(acc)
+	if err != nil {
+		t.Fatalf("InsertAccount: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+
+	got, err := s.LoadAccounts()
+	if err != nil {
+		t.Fatalf("LoadAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(got))
+	}
+	if got[0].Path != "Assets:Bank:SEB" {
+		t.Errorf("path = %q, want %q", got[0].Path, "Assets:Bank:SEB")
+	}
+	if got[0].Type != finance.Assets {
+		t.Errorf("type = %q, want %q", got[0].Type, finance.Assets)
+	}
+	if got[0].ID != id {
+		t.Errorf("ID = %d, want %d", got[0].ID, id)
+	}
+
+}
+
+func TestInsertAndLoadEntry(t *testing.T) {
+	s := newTestStore(t)
+
+	// Set up accounts first
+	sebID, err := s.InsertAccount(finance.Account{
+		Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount SEB: %v", err)
+	}
+	grocID, err := s.InsertAccount(finance.Account{
+		Path: "Expenses:Food:Groceries", Type: finance.Expenses, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount Groceries: %v", err)
+	}
+
+	entry := finance.Entry{
+		Date:     time.Date(2026, 4, 14, 10, 0, 10, 10, time.UTC),
+		Payee:    "Malmborgs",
+		RawPayee: "Ica Malmborgs Eriklust",
+		Memo:     "Veckans mat",
+		Tags:     []string{"fest", "april"},
+		Postings: []finance.Posting{
+			{AccountID: grocID, Amount: 649_50, Currency: "SEK"},
+			{AccountID: sebID, Amount: -649_50, Currency: "SEK"},
+		},
+	}
+
+	entryID, err := s.InsertEntry(entry)
+	if err != nil {
+		t.Fatalf("InsertEntry: %v", err)
+	}
+	if entryID == 0 {
+		t.Fatalf("expected non-zero entry ID")
+	}
+
+	entries, err := s.LoadEntries()
+	if err != nil {
+		t.Fatalf("LoadEntries: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+
+	got := entries[0]
+	if got.Payee != "Malmborgs" {
+		t.Errorf("payee = %q, want %q", got.Payee, "Malmborgs")
+	}
+	if got.Memo != "Veckans mat" {
+		t.Errorf("memo = %q, want %q", got.Memo, "Veckans mat")
+	}
+	if len(got.Tags) != 2 {
+		t.Fatalf("tags count = %d, want 2", len(got.Tags))
+	}
+	if len(got.Postings) != 2 {
+		t.Fatalf("postings count = %d, want 2", len(got.Postings))
+	}
+	if err = got.Validate(); err != nil {
+		t.Errorf("loaded entry doesn't validate: %v", err)
+	}
+}
