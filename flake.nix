@@ -19,6 +19,7 @@
           packages = [
             pkgs.bashInteractive
             pkgs.go
+            pkgs.gotestsum
             pkgs.gopls
           ];
         };
