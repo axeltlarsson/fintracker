@@ -30,7 +30,7 @@ func (e Entry) Validate() error {
 	// 1. At least two postings in a transaction
 	// 2. Sum of amounts per currency must equal zero
 	if len(e.Postings) < 2 {
-		return fmt.Errorf("transaction needs at least 2 postings, got %d2", len(e.Postings))
+		return fmt.Errorf("transaction needs at least 2 postings, got %d", len(e.Postings))
 	}
 	// collect sums by currency
 	sums := make(map[string]Öre)

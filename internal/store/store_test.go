@@ -241,3 +241,49 @@ func TestInsertAndLoadEntry(t *testing.T) {
 		t.Errorf("loaded entry doesn't validate: %v", err)
 	}
 }
+
+func TestInsertAccountDuplicate(t *testing.T) {
+	s := newTestStore(t)
+	acc := finance.Account{Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK"}
+
+	if _, err := s.InsertAccount(acc); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	_, err := s.InsertAccount(acc)
+	if err == nil {
+		t.Fatalf("expected error on duplicate path, got nil")
+	}
+}
+
+func TestInsertEntryValidationFail(t *testing.T) {
+	s := newTestStore(t)
+	bad := finance.Entry{
+		Date: time.Now(),
+		Postings: []finance.Posting{
+			{AccountID: 1, Amount: 100_00, Currency: "SEK"},
+			// deliberately unbalanced
+		},
+	}
+	_, err := s.InsertEntry(bad)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+}
+
+func TestInsertEntryForeignKeyViolation(t *testing.T) {
+	s := newTestStore(t)
+
+	e := finance.Entry{
+		Date: time.Now(),
+		Postings: []finance.Posting{
+			{AccountID: 123, Amount: 100_00, Currency: "SEK"},
+			{AccountID: 124, Amount: -100_00, Currency: "SEK"},
+		},
+	}
+	_, err := s.InsertEntry(e)
+	if err == nil {
+		t.Fatal("expected account_id foreign key to fail, got nil")
+	}
+
+}

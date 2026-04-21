@@ -335,6 +335,18 @@ func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
 
 }
 
+func (s *Store) UpdateEntry(e finance.Entry) error {
+	_, err := s.db.Exec(`
+		UPDATE entries
+		SET payee = ?, memo = ?, cleared = ?
+		WHERE id = ?
+	`, e.Payee, e.Memo, e.Cleared, e.ID)
+	if err != nil {
+		return fmt.Errorf("updating entry %d: %w", e.ID, err)
+	}
+	return nil
+}
+
 func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	// 1. Load all entries
 	rows, err := s.db.Query(`
