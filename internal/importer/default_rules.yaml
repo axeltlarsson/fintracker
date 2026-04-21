@@ -1,0 +1,6 @@
+- pattern: "ICA"
+  normalized_payee: "ICA"
+  priority: 10
+- patter: "SPOTIFY"
+  normalized_payee: "Spotify"
+  priority: 10

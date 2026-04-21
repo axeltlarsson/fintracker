@@ -209,6 +209,20 @@ var migrations = []func(*sql.Tx) error{
 		`)
 		return err
 	},
+
+	// 2 -> 3
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`
+			create table payee_rules (
+				id integer primary key autoincrement,
+				pattern text not null,
+				normalized_payee text not null default '',
+				default_account_id integer references accounts(id) on delete set null,
+				priority integer not null default 0
+			);
+		`)
+		return err
+	},
 }
 
 func migrate(db *sql.DB) error {

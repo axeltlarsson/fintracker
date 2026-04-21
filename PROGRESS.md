@@ -106,11 +106,11 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 - [x] errgroup (golang.org/x/sync/errgroup)
 - [ ] net/http (client and server)
 - [ ] JSON encoding/decoding
-- [ ] Custom error types (errors.As, errors.Is) ← Phase 13
+- [ ] Custom error types (errors.As, errors.Is) ← still to cover
 - [ ] Benchmarking (go test -bench, pprof)
 - [ ] Build tags
 - [ ] go generate
-- [ ] //go:embed ← Phase 14
+- [x] //go:embed
 - [ ] Reflection (struct tags under the hood)
 
 ---
@@ -415,4 +415,28 @@ q            quit
 **Concepts practiced:** `PRAGMA user_version` for schema versioning, migration-per-transaction pattern, `defer tx.Rollback()` as no-op after commit, `sql.Stmt` vs `sql.Result` (Close semantics), `sql.Rows` resource lifecycle, map-assemble pattern for avoiding complex JOINs, aggregate root in DB design (CASCADE vs RESTRICT), `defer` evaluation semantics (receiver captured at defer-time, not at function exit).
 
 **Next:** Phase 13 wrap-up — potentially add `UpdateEntry`, test edge cases (duplicate account path, foreign key violation on bad account_id). Then Phase 14: import pipeline v2 (CSV → Entry+Posting pairs, payee_rules table).
+
+### Session 9 — Phase 13 wrap-up + Phase 14 start (import pipeline v2)
+**Date:** 2026-04-21
+**Covered:** Wrapped up Phase 13, then built the foundation of Phase 14.
+
+**Phase 13 wrap-up:**
+- Fixed stray `2` in `Validate()` error message (`%d2` → `%d`) — caught by code review, `go vet` would have caught the `%d`/struct mismatch variant
+- `UpdateEntry(e finance.Entry) error` — updates mutable header fields (payee, memo, cleared) by ID. Design: whole-entity update (caller holds full entry, mutates field, passes back) vs per-field methods — whole-entity is idiomatic for CRUD where the caller always has the full struct.
+- Edge case tests: `TestInsertAccountDuplicate` (UNIQUE constraint), `TestInsertEntryValidationFail` (Go-layer reject before DB), `TestInsertEntryForeignKeyViolation` (FK constraint with `PRAGMA foreign_keys=ON`). The FK test used balanced postings with nonexistent account IDs — intentionally isolates the DB-layer constraint from the Go-layer `Validate()`.
+- Layered constraint model: Go enforces business invariants (`Validate()`), SQLite enforces data integrity (UNIQUE, FK). Tests should know which layer they're testing.
+
+**Phase 14 — import pipeline foundation:**
+- `payee_rules` migration (2→3): `ON DELETE SET NULL` — third FK strategy: referenced row deletion nulls the FK column rather than cascading or blocking. Right choice for rules that survive account deletion.
+- Strategy pattern: `BankFormat` interface (`Parse(io.Reader) ([]RawRow, error)`), `SEBFormat` implementation. `RawRow` is the decoupled intermediate type — parser knows nothing about accounts or rules. `account` parameter dropped from `parseRow` because `RawRow` doesn't carry source account — that's injected by the caller at `Import` time.
+- Value vs pointer receiver: `SEBFormat` is stateless — value receiver, so both `SEBFormat{}` and `&SEBFormat{}` satisfy the interface.
+- `ParseAmount` duplication resolved: `importer/seb.go` calls `parser.ParseAmount` — `importer → parser → finance` is a valid dependency chain.
+- `//go:embed`: compiler directive embeds `default_rules.yaml` into the binary as `[]byte`. Must be on the line immediately before the `var`. Requires `_ "embed"` blank import (side-effect import, same pattern as `_ "modernc.org/sqlite"`). File becomes a build dependency — deleting it breaks the build.
+- `Import` function: `format.Parse` → sort rules by priority → match each row → build `Entry` with two postings (source + counter). Signing: CSV amount goes to source posting unchanged; counter posting gets `-amount`. Sum = 0, `Validate()` passes. `ImportResult{Entries, Unmatched}` splits matched vs unmatched rows cleanly.
+- `matchRule`: case-insensitive `strings.Contains`, first match wins (rules pre-sorted). Mirrors `Categorize` in `finance/categorize.go`.
+- `copy(sorted, rules)` before `sort.Slice` — defensive copy prevents mutating the caller's slice.
+
+**Concepts practiced:** `ON DELETE SET NULL`, strategy pattern via interfaces, `//go:embed` + blank import, value vs pointer receivers, double-entry signing convention, `ImportResult` as a result type splitting two outcome classes, defensive copy before sort.
+
+**Next:** Phase 14 continues — `LoadPayeeRules`/`InsertPayeeRule` store methods, YAML→DB rule migration, wire `Import` into the TUI import flow (replace old `parseAllFiles` → `UpsertTransactions` chain).
 
