@@ -26,13 +26,6 @@ type BankFormat interface {
 	Parse(r io.Reader) ([]RawRow, error)
 }
 
-type PayeeRule struct {
-	Pattern          string
-	NormalizedPayee  string
-	DefaultAccountID int64
-	Priority         int
-}
-
 // ImportResult splits rows into matched entries (ready to insert) and
 // unmatched rows (no rul fired, need manual account assignment in the TUI)
 type ImportResult struct {
@@ -40,13 +33,13 @@ type ImportResult struct {
 	Unmatched []RawRow
 }
 
-func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []PayeeRule) (ImportResult, error) {
+func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finance.PayeeRule) (ImportResult, error) {
 	rows, err := format.Parse(r)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("parsing: %w", err)
 	}
 
-	sorted := make([]PayeeRule, len(rules))
+	sorted := make([]finance.PayeeRule, len(rules))
 	copy(sorted, rules)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Priority < sorted[j].Priority
@@ -73,7 +66,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []Payee
 
 }
 
-func matchRule(payee string, rules []PayeeRule) (PayeeRule, bool) {
+func matchRule(payee string, rules []finance.PayeeRule) (finance.PayeeRule, bool) {
 	for _, rule := range rules {
 
 		if strings.Contains(
@@ -83,6 +76,10 @@ func matchRule(payee string, rules []PayeeRule) (PayeeRule, bool) {
 			return rule, true
 		}
 	}
-	return PayeeRule{}, false
+	return finance.PayeeRule{}, false
+
+}
+
+func (s *Store) InsertPayeeRule(r finance.PayeeRule) (int64, error) {
 
 }
