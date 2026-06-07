@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"fintracker/internal/finance"
+
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed default_rules.yaml
@@ -58,7 +60,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 			RawPayee: row.RawPayee,
 			Postings: []finance.Posting{
 				{AccountID: sourceAccountID, Amount: row.Amount, Currency: "SEK"},
-				{AccountID: rule.DefaultAccountID, Amount: -row.Amount, Currency: "SEK"},
+				{AccountID: *rule.DefaultAccountID, Amount: -row.Amount, Currency: "SEK"},
 			},
 		})
 	}
@@ -80,6 +82,29 @@ func matchRule(payee string, rules []finance.PayeeRule) (finance.PayeeRule, bool
 
 }
 
-func (s *Store) InsertPayeeRule(r finance.PayeeRule) (int64, error) {
+// yamlRule is the on-disk shape of a payee rule in default_rules.yaml
+// Separate from finance.PayeeRule because YAML has no ID or account reference
+type yamlRule struct {
+	Pattern         string `yaml:"pattern"`
+	NormalizedPayee string `yaml:"normalized_payee"`
+	Priority        int    `yaml:"priority"`
+}
 
+// DefaultRules parses the embedded default_rules.yaml into PayeeRules
+// DefaultAccountID is nil - the user assigns accounts after seeding
+func DefaultRules() ([]finance.PayeeRule, error) {
+	var raw []yamlRule
+	if err := yaml.Unmarshal(defaultRules, &raw); err != nil {
+		return nil, fmt.Errorf("parsing default rules: %w", err)
+	}
+
+	rules := make([]finance.PayeeRule, len(raw))
+	for i, r := range raw {
+		rules[i] = finance.PayeeRule{
+			Pattern:         r.Pattern,
+			NormalizedPayee: r.NormalizedPayee,
+			Priority:        r.Priority,
+		}
+	}
+	return rules, nil
 }

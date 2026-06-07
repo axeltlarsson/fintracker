@@ -440,3 +440,25 @@ q            quit
 
 **Next:** Phase 14 continues — `LoadPayeeRules`/`InsertPayeeRule` store methods, YAML→DB rule migration, wire `Import` into the TUI import flow (replace old `parseAllFiles` → `UpsertTransactions` chain).
 
+### Session 10 — Phase 14 continued (store methods, seeding, `*int64` nullable pattern)
+**Date:** 2026-06-03 to 2026-06-07
+**Covered:** Store CRUD for payee rules, nullable FK pattern, embedded YAML seeding.
+
+**`PayeeRule` moved to `finance` package:** Originally in `importer` — but `store` also needs it for CRUD. Moving to `finance` avoids `store → importer` dependency; both `store` and `importer` already import `finance`. Domain types belong in the leaf package.
+
+**`*int64` for nullable FK:** `DefaultAccountID *int64` replaces `int64` — `ON DELETE SET NULL` can produce NULL, and `0` is an ambiguous sentinel. Mirrors `*time.Time` for nullable dates on `Account`. Cascading fix: `matchRule` returns `*int64`, posting construction dereferences with `*rule.DefaultAccountID`, test literals need a `ptr(n int64) *int64` helper since Go can't take the address of numeric literals.
+
+**`sql.NullInt64`:** Standard library bridge for nullable integer columns. `{Int64 int64; Valid bool}` — scan into it, check `.Valid`, convert to `*int64`. Predates generics; Go 1.22 added `sql.Null[T]` but `NullInt64` is still idiomatic.
+
+**Store methods:**
+- `InsertPayeeRule` / `LoadPayeeRules` — standard CRUD with `sql.NullInt64` scan for nullable FK. `ORDER BY priority, id` for deterministic ordering.
+- `SeedPayeeRules(defaults []finance.PayeeRule)` — idempotent: checks `COUNT(*)`, inserts only if table is empty. Schema migrations are for structure, seeding is for data — kept separate so `default_rules.yaml` can change without new migrations.
+
+**Embedded YAML seeding:**
+- `yamlRule` struct with struct tags — separate from `finance.PayeeRule` because YAML has no `id` or `default_account_id`. Bridge function `DefaultRules()` parses `defaultRules` bytes and converts.
+- Fixed typo in `default_rules.yaml` (`patter` → `pattern`) — YAML silently ignores unknown keys, so the rule would have had an empty pattern matching everything.
+
+**Concepts practiced:** Nullable FK modelling (`*int64` vs sentinel), `sql.NullInt64` for scanning nullable columns, Go's inability to take address of literals (and the `ptr()` helper pattern), idempotent seeding vs schema migration, YAML struct tags as bridge types, package dependency direction (domain types in leaf package).
+
+**Next:** Phase 14 wrap-up — wire `Import` into the TUI import flow, replacing `parseAllFiles` → `UpsertTransactions` with `BankFormat.Parse` → `Import` → `InsertEntry`. Call `SeedPayeeRules` + `LoadPayeeRules` at startup.
+

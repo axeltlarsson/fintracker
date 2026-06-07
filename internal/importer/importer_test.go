@@ -6,11 +6,7 @@ import (
 	"testing"
 )
 
-func TestDefaultRulesEmbedded(t *testing.T) {
-	if len(defaultRules) == 0 {
-		t.Fatal("defaultRules should not be empty")
-	}
-}
+func ptr(n int64) *int64 { return &n }
 
 func TestImport(t *testing.T) {
 	input := strings.NewReader(
@@ -19,9 +15,9 @@ func TestImport(t *testing.T) {
 			"2026-04-03;-250,00;OKÄND BUTIK\n",
 	)
 
-	rules := []PayeeRule{
-		{Pattern: "ICA", NormalizedPayee: "ICA", DefaultAccountID: 10, Priority: 0},
-		{Pattern: "SPOTIFY", NormalizedPayee: "Spotify", DefaultAccountID: 11, Priority: 0},
+	rules := []finance.PayeeRule{
+		{Pattern: "ICA", NormalizedPayee: "ICA", DefaultAccountID: ptr(10), Priority: 0},
+		{Pattern: "SPOTIFY", NormalizedPayee: "Spotify", DefaultAccountID: ptr(11), Priority: 0},
 	}
 	result, err := Import(input, SEBFormat{}, 1, rules)
 	if err != nil {
@@ -49,5 +45,21 @@ func TestImport(t *testing.T) {
 
 	if result.Entries[0].Validate() != nil {
 		t.Errorf("posting should Validate successfully")
+	}
+}
+
+
+func TestDefaultRules(t *testing.T) {
+	rules, err := DefaultRules()
+	if err != nil {
+		t.Fatalf("DefaultRules: %v", err)
+	}
+	if len(rules) < 2 {
+		t.Fatalf("expected at least 2 default rules, got %d", len(rules))
+	}
+	for _, r := range rules {
+		if r.Pattern == "" {
+			t.Errorf("rules %q has empty pattern", r.NormalizedPayee)
+		}
 	}
 }

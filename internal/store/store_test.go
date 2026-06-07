@@ -287,3 +287,56 @@ func TestInsertEntryForeignKeyViolation(t *testing.T) {
 	}
 
 }
+
+func TestInsertAndLoadPayeeResult(t *testing.T) {
+	s := newTestStore(t)
+
+	// create an account reference
+	accID, err := s.InsertAccount(finance.Account{
+		Path: "Expenses:Food", Type: finance.Expenses, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount: %v", err)
+	}
+
+	// Rule with acccount
+	_, err = s.InsertPayeeRule(finance.PayeeRule{
+		Pattern:          "ICA",
+		NormalizedPayee:  "ICA",
+		DefaultAccountID: &accID,
+		Priority:         10,
+	})
+	if err != nil {
+		t.Fatalf("InsertPayeeRule: %v", err)
+	}
+
+	// Rule without account (nil DefaultAccountID)
+	_, err = s.InsertPayeeRule(finance.PayeeRule{
+		Pattern:         "SPOTIFY",
+		NormalizedPayee: "Spotify",
+		Priority:        20,
+	})
+	if err != nil {
+		t.Fatalf("InsertPayeeRule: %v", err)
+	}
+
+	rules, err := s.LoadPayeeRules()
+	if err != nil {
+		t.Fatalf("LoadPayeeRules: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("got %d rules, want 2", len(rules))
+	}
+
+	// Ordered by priority - ICA (10) first
+	if rules[0].Pattern != "ICA" {
+		t.Errorf("rules[0].Pattern = %q, want %q", rules[0].Pattern, "ICA")
+	}
+	if rules[0].DefaultAccountID == nil || *rules[0].DefaultAccountID != accID {
+		t.Errorf("rules[0].DefaultAccountID = %v, want %d", rules[0].DefaultAccountID, accID)
+	}
+	if rules[1].DefaultAccountID != nil {
+		t.Errorf("rules[1].DefaultAccountID = %v, want nil", rules[1].DefaultAccountID)
+	}
+
+}

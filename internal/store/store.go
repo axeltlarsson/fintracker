@@ -453,3 +453,64 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	return entries, nil
 
 }
+
+func (s *Store) InsertPayeeRule(r finance.PayeeRule) (int64, error) {
+	result, err := s.db.Exec(`
+		insert into payee_rules (pattern, normalized_payee, default_account_id, priority)
+		values (?, ?, ?, ?)
+	`, r.Pattern, r.NormalizedPayee, r.DefaultAccountID, r.Priority)
+	if err != nil {
+		return 0, fmt.Errorf("inserting payee rule %q: %w", r.Pattern, err)
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) LoadPayeeRules() ([]finance.PayeeRule, error) {
+	rows, err := s.db.Query(`
+		select id, pattern, normalized_payee, default_account_id, priority
+		from payee_rules
+		order by priority, id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying payee rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []finance.PayeeRule
+	for rows.Next() {
+		var r finance.PayeeRule
+		var accountID sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.Pattern, &r.NormalizedPayee, &accountID, &r.Priority); err != nil {
+			return nil, fmt.Errorf("scanning payee rules: %w", err)
+		}
+		if accountID.Valid {
+			r.DefaultAccountID = &accountID.Int64
+		}
+		rules = append(rules, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating payee rules: %w", err)
+	}
+
+	return rules, nil
+
+}
+
+func (s *Store) SeedPayeeRules(defaults []finance.PayeeRule) (int, error) {
+	var count int
+	err := s.db.QueryRow("selec count(*) from payee_rules").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting payee rules: %w", err)
+	}
+	if count > 0 {
+		return 0, nil
+	}
+	for _, r := range defaults {
+		if _, err := s.InsertPayeeRule(r); err != nil {
+			return 0, fmt.Errorf("seeding rule %q: %w", r.Pattern, err)
+		}
+		count++
+	}
+	return count, nil
+}
