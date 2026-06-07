@@ -4,6 +4,7 @@ import (
 	"fintracker/internal/finance"
 	"strings"
 	"testing"
+	"time"
 )
 
 func ptr(n int64) *int64 { return &n }
@@ -48,7 +49,6 @@ func TestImport(t *testing.T) {
 	}
 }
 
-
 func TestDefaultRules(t *testing.T) {
 	rules, err := DefaultRules()
 	if err != nil {
@@ -60,6 +60,41 @@ func TestDefaultRules(t *testing.T) {
 	for _, r := range rules {
 		if r.Pattern == "" {
 			t.Errorf("rules %q has empty pattern", r.NormalizedPayee)
+		}
+	}
+}
+
+func TestPlaceholderEntries(t *testing.T) {
+	rows := []RawRow{
+		{Date: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "OKÄND butik"},
+		{Date: time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC), Amount: 25_000_00, RawPayee: "Arbetsgivare"},
+	}
+
+	entries := PlaceholderEntries(rows, 1, 7)
+
+	if len(entries) != len(rows) {
+		t.Fatalf("got %d entries, want %d", len(entries), len(rows))
+	}
+
+	for i, e := range entries {
+		if err := e.Validate(); err != nil {
+			t.Fatalf("entry %d: Validate: %v", i, err)
+		}
+		if e.Cleared {
+			t.Errorf("entry %d: should not be cleared", i)
+		}
+		if e.Payee != "" {
+			t.Errorf("entry %d: Payee = %q, want empty", i, e.Payee)
+		}
+		if e.RawPayee != rows[i].RawPayee {
+			t.Errorf("entry %d: RawPayee = %q, want %q", i, e.RawPayee, rows[i].RawPayee)
+		}
+		if e.Postings[0].AccountID != 1 || e.Postings[1].AccountID != 7 {
+			t.Errorf("entry %d: account IDs = %d,%d, want 1,7",
+				i, e.Postings[0].AccountID, e.Postings[1].AccountID)
+		}
+		if e.Postings[0].Amount != rows[i].Amount {
+			t.Errorf("entry %d: source amount = %v, want %v", i, e.Postings[0].Amount, e.Postings[i].Amount)
 		}
 	}
 }

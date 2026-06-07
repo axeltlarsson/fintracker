@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"errors"
 	"fintracker/internal/finance"
 	_ "modernc.org/sqlite"
 )
@@ -513,4 +514,24 @@ func (s *Store) SeedPayeeRules(defaults []finance.PayeeRule) (int, error) {
 		count++
 	}
 	return count, nil
+}
+
+// EnsureAccount returns the ID of the account at path, creating it
+// (with type inferred from the first path segment) if it doesn't exist
+func (s *Store) EnsureAccount(path string) (int64, error) {
+	typ, err := finance.AccountTypeFromPath(path)
+	if err != nil {
+		return 0, fmt.Errorf("ensuring account %q: %w", path, err)
+	}
+
+	var id int64
+	err = s.db.QueryRow("select id from accounts where path = ?", path).Scan(&id)
+	switch {
+	case err == nil:
+		return id, nil //exists
+	case errors.Is(err, sql.ErrNoRows):
+		return s.InsertAccount(finance.Account{Path: path, Type: typ, Currency: "SEK"})
+	default:
+		return 0, fmt.Errorf("look up account %q: %w", path, err)
+	}
 }

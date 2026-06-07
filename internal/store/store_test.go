@@ -340,3 +340,38 @@ func TestInsertAndLoadPayeeResult(t *testing.T) {
 	}
 
 }
+
+func TestEnsureAccount(t *testing.T) {
+	s := newTestStore(t)
+
+	// garbage part errors
+	_, err := s.EnsureAccount("bnk:SEB")
+	if err == nil {
+		t.Error("incorrect path should error")
+	}
+	// idempotency test - calling something twise - same result (ID) and create only one row
+	id, err := s.EnsureAccount("Assets:SEB")
+	if err != nil {
+		t.Fatalf("s.EnsureAccount %v", err)
+	}
+	id2, err := s.EnsureAccount("Assets:SEB")
+	if err != nil {
+		t.Fatalf("s.EnsureAccount called twice err: %v", err)
+	}
+	if id != id2 {
+		t.Errorf("s.EnsureAccount is not idempotent id (%q) != id2 (%q)", id, id2)
+	}
+	// assert inferred type round-trips via load accounts
+	accs, err := s.LoadAccounts()
+	if err != nil {
+		t.Fatalf("s.LoadAccounts() %v", err)
+	}
+
+	if accs[0].ID != id {
+		t.Errorf("accs[0].ID got %q want %q", accs[0].ID, id)
+	}
+	if accs[0].Type != finance.Assets {
+		t.Errorf("accs[0].Type got %q want 'Assets'", accs[0].Type)
+	}
+
+}

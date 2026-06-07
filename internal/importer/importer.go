@@ -108,3 +108,22 @@ func DefaultRules() ([]finance.PayeeRule, error) {
 	}
 	return rules, nil
 }
+
+func PlaceholderEntries(rows []RawRow, sourceAccountID, placeholderAccountID int64) []finance.Entry {
+	entries := make([]finance.Entry, 0, len(rows))
+	for _, row := range rows {
+		entry := finance.Entry{
+			Date:     row.Date,
+			Payee:    "", // unmatched - review TUI to fill in
+			RawPayee: row.RawPayee,
+			Postings: []finance.Posting{
+				{AccountID: sourceAccountID, Amount: row.Amount, Currency: "SEK"},
+				{AccountID: placeholderAccountID, Amount: -row.Amount, Currency: "SEK"},
+			},
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries
+
+}

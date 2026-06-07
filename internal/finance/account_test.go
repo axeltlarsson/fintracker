@@ -64,3 +64,30 @@ func TestAccountDepth(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountTypeFromPath(t *testing.T) {
+	tests := []struct {
+		path    string
+		want    finance.AccountType
+		wantErr bool
+	}{
+		{"Assets:Bank:SEB", finance.Assets, false},
+		{"Expenses:Food:Groceries", finance.Expenses, false},
+		{"Equity", finance.Equity, false},
+		{"Bnak:SEB", "", true},        // typo
+		{"", "", true},               // empty path
+		{"assets:Bank:SEB", "", true}, // case sensitive
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got, err := finance.AccountTypeFromPath(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

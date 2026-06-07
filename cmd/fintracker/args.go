@@ -13,9 +13,9 @@ func parseArgs(args []string) ([]tui.ImportSpec, error) {
 	var specs []tui.ImportSpec
 
 	for _, arg := range args {
-		parts := strings.SplitN(arg, ":", 2)
+		parts := strings.SplitN(arg, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("expected account:path, got %q", arg)
+			return nil, fmt.Errorf("expected account=path, got %q", arg)
 		}
 
 		account := parts[0]

@@ -5,7 +5,8 @@
       "Bash(go test:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(fd -e go . /Users/axel/dev/fintracker --exec wc -l {})"
     ]
   },
   "outputStyle": "Learning"

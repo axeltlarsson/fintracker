@@ -106,7 +106,7 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 - [x] errgroup (golang.org/x/sync/errgroup)
 - [ ] net/http (client and server)
 - [ ] JSON encoding/decoding
-- [ ] Custom error types (errors.As, errors.Is) ← still to cover
+- [~] Custom error types (errors.Is ✓ via sql.ErrNoRows; errors.As + custom types still to cover)
 - [ ] Benchmarking (go test -bench, pprof)
 - [ ] Build tags
 - [ ] go generate
@@ -461,4 +461,29 @@ q            quit
 **Concepts practiced:** Nullable FK modelling (`*int64` vs sentinel), `sql.NullInt64` for scanning nullable columns, Go's inability to take address of literals (and the `ptr()` helper pattern), idempotent seeding vs schema migration, YAML struct tags as bridge types, package dependency direction (domain types in leaf package).
 
 **Next:** Phase 14 wrap-up — wire `Import` into the TUI import flow, replacing `parseAllFiles` → `UpsertTransactions` with `BankFormat.Parse` → `Import` → `InsertEntry`. Call `SeedPayeeRules` + `LoadPayeeRules` at startup.
+
+### Session 11 — Phase 14 continued (account resolution, placeholder entries, errors.Is)
+**Date:** 2026-06-07
+**Covered:** Pre-wiring design decisions and implementation: CLI spec format, account resolution, unmatched-row policy.
+
+**Design decision — CLI spec separator:** `account:path` broke once accounts became hierarchical paths (`Assets:Bank:SEB` contains colons). Chose `=` separator: `Assets:Bank:SEB=testdata/seb.csv`. One-line change in `args.go` (`SplitN(arg, "=", 2)`).
+
+**Design decision — account resolution at import:** validated get-or-create. `AccountTypeFromPath(path)` (package-level function in `finance/account.go`) validates the first path segment against the five `AccountType` constants and infers the type — typos in the first segment fail loudly. `EnsureAccount(path)` in store does lookup-or-insert.
+
+**`errors.Is` and sentinel errors (finally checked off):** `sql.ErrNoRows` as the canonical sentinel error. `EnsureAccount` distinguishes three outcomes: found (return ID), not-found (`errors.Is(err, sql.ErrNoRows)` → take the create branch), real error (propagate). Modern Go rule: never `==` on errors — `errors.Is` walks the `%w` unwrap chain. Bare `switch { case ... }` as a cleaner if/else-if chain.
+
+**Design decision — unmatched rows policy:** Unmatched rows can't become entries directly (no counter account, `Validate()` requires two balanced postings) but must not be lost on quit. Chose placeholder account parking: unmatched rows become real entries with counter posting → `Equity:Uncategorized`, persisted `cleared=false`.
+- Why Equity (Axel's catch): unmatched rows aren't necessarily expenses — a salary parked in `Expenses:Uncategorized` would show as negative expense. Equity is accounting's type-neutral "no claim made" bucket (cf. `Equity:Opening-Balances`); pollutes neither expense nor income reports, and a non-zero Equity balance is a loud "review me" signal rather than plausible-looking wrong data.
+- Review-everything: ALL imported entries get `cleared=false` (matched rules are suggestions, not truth). Already the behavior via zero value — `Import` never sets `Cleared`.
+- Mechanism in importer, policy in caller: `PlaceholderEntries(rows, sourceAccountID, placeholderAccountID)` is a pure function; the caller decides whether/which placeholder account. Sign-splitting later = caller filters by sign, calls twice.
+
+**Test discipline:** subtest auto-naming (`#00` when name is empty string), test-data bugs vs code bugs (failing test where the test table was wrong, twice), regression test with both amount signs pinning the salary case.
+
+**Naming:** `PlaceHolderEntries` → `PlaceholderEntries` — "placeholder" is one word; mid-word caps are like writing `DataBase`.
+
+**Known gap (next session opener):** import idempotency is LOST in the new pipeline. Old `transactions` table had `unique(date, amount, payee, account)` + upsert; `entries` has no unique constraint and identifying data spans two tables. Re-importing the same CSV duplicates everything. Needs design (import hash? dedup query? import log?) + migration BEFORE wiring, or first re-import double-counts balances.
+
+**Concepts practiced:** sentinel errors and `errors.Is`, conditionless `switch`, get-or-create pattern, pure-function design for testability, zero value correctness (`Cleared`), policy/mechanism separation, accounting equity semantics.
+
+**Next:** dedup design discussion → then the wiring: `SeedPayeeRules` in `main.go`, rework `importAllCmd`/`parseAllFiles` (EnsureAccount sequential before fan-out, parse parallel, InsertEntry sequential after join — no DB in goroutines, SQLITE_BUSY), display shim for entries.
 
