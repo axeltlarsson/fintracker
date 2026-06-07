@@ -7,14 +7,15 @@ import (
 
 // TODO will become Transaction
 type Entry struct {
-	ID       int64
-	Date     time.Time
-	Payee    string
-	RawPayee string
-	Memo     string
-	Cleared  bool
-	Postings []Posting
-	Tags     []string
+	ID         int64
+	Date       time.Time
+	Payee      string
+	RawPayee   string
+	Memo       string
+	Cleared    bool
+	Postings   []Posting
+	Tags       []string
+	ImportHash string // content hash for import deduplication; "" = manual entry, stored as NULL
 }
 
 type Posting struct {

@@ -224,6 +224,15 @@ var migrations = []func(*sql.Tx) error{
 		`)
 		return err
 	},
+
+	// 3 → 4
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`
+		alter table entries add column import_hash text;
+		create unique index idx_entries_import_hash on entries(import_hash);
+		`)
+		return err
+	},
 }
 
 func migrate(db *sql.DB) error {

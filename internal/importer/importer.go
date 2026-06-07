@@ -11,6 +11,8 @@ import (
 	"fintracker/internal/finance"
 
 	"gopkg.in/yaml.v3"
+	"crypto/sha256"
+	"encoding/hex"
 )
 
 //go:embed default_rules.yaml
@@ -21,6 +23,7 @@ type RawRow struct {
 	Date     time.Time
 	Amount   finance.Öre
 	RawPayee string
+	Hash     string // import dedup hash, stamped after parse
 }
 
 // BankFormat knows how to parse a specific bank's CSV export
@@ -40,6 +43,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("parsing: %w", err)
 	}
+	stampHashes(rows)
 
 	sorted := make([]finance.PayeeRule, len(rules))
 	copy(sorted, rules)
@@ -62,6 +66,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 				{AccountID: sourceAccountID, Amount: row.Amount, Currency: "SEK"},
 				{AccountID: *rule.DefaultAccountID, Amount: -row.Amount, Currency: "SEK"},
 			},
+			ImportHash: row.Hash,
 		})
 	}
 	return result, nil
@@ -120,10 +125,23 @@ func PlaceholderEntries(rows []RawRow, sourceAccountID, placeholderAccountID int
 				{AccountID: sourceAccountID, Amount: row.Amount, Currency: "SEK"},
 				{AccountID: placeholderAccountID, Amount: -row.Amount, Currency: "SEK"},
 			},
+			ImportHash: row.Hash,
 		}
 		entries = append(entries, entry)
 	}
 
 	return entries
+
+}
+
+func stampHashes(rows []RawRow) {
+	seen := make(map[string]int)
+	for i, row := range rows {
+		key := fmt.Sprintf("%s|%d|%s", row.Date.Format("2006-01-02"), row.Amount, row.RawPayee)
+		seen[key]++
+		keyWithCount := fmt.Sprintf("%s|%d", key, seen[key])
+		shaSum := sha256.Sum256([]byte(keyWithCount))
+		rows[i].Hash = hex.EncodeToString(shaSum[:])
+	}
 
 }

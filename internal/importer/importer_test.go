@@ -98,3 +98,33 @@ func TestPlaceholderEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestStampHashes(t *testing.T) {
+	rows := []RawRow{
+		{Date: time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"},
+		{Date: time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"},
+		{Date: time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"}, // Distinct
+
+	}
+	stampHashes(rows)
+
+	// every hash non empty
+	// two identical rows get different hashes
+	if rows[0].Hash == rows[1].Hash {
+		t.Fatalf("different hashes expected for rows[0].Hash and rows[1].Hash: %q == %q", rows[0].Hash, rows[1].Hash)
+	}
+	if rows[1].Hash == rows[2].Hash {
+		t.Error("distinct row should get different hash")
+	}
+	// hash reproduces
+	freshRows := []RawRow{
+		{Date: time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"},
+		{Date: time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"},
+		{Date: time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "Espresso house"},
+	}
+	stampHashes(freshRows)
+
+	if rows[0].Hash != freshRows[0].Hash {
+		t.Errorf("hash did not reproduce %q != %q", rows[0].Hash, freshRows[0].Hash)
+	}
+}
