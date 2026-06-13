@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fintracker/internal/finance"
 	"testing"
 	"time"
@@ -284,6 +285,55 @@ func TestInsertEntryForeignKeyViolation(t *testing.T) {
 	_, err := s.InsertEntry(e)
 	if err == nil {
 		t.Fatal("expected account_id foreign key to fail, got nil")
+	}
+
+}
+
+func TestInsertEntryDuplicate(t *testing.T) {
+	s := newTestStore(t)
+
+	// create an account reference
+	accID, err := s.InsertAccount(finance.Account{
+		Path: "Expenses:Food", Type: finance.Expenses, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount: %v", err)
+	}
+
+	e := finance.Entry{
+		Date:       time.Now(),
+		Payee:      "Ica",
+		ImportHash: "test-hash-1",
+		Postings: []finance.Posting{
+			{AccountID: accID, Amount: 100_00, Currency: "SEK"},
+			{AccountID: accID, Amount: -100_00, Currency: "SEK"},
+		},
+	}
+	_, err = s.InsertEntry(e)
+	if err != nil {
+		t.Errorf("error inserting entry: %v", err)
+	}
+
+	// insert same duplicate entry
+	_, err = s.InsertEntry(e)
+	if !errors.Is(err, ErrDuplicateEntry) {
+		t.Error("expected ErrDuplicateEntry")
+	}
+
+	// entries without ImportHash don't cause ErrDuplicateEntry
+
+	e2 := finance.Entry{
+		Date:       time.Now(),
+		Payee:      "Ica",
+		ImportHash: "",
+		Postings: []finance.Posting{
+			{AccountID: accID, Amount: 100_00, Currency: "SEK"},
+			{AccountID: accID, Amount: -100_00, Currency: "SEK"},
+		},
+	}
+	_, err2 := s.InsertEntry(e2)
+	if err2 != nil {
+		t.Errorf("unexpected error for duplicate entry with nil importhash")
 	}
 
 }

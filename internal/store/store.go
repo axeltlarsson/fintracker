@@ -10,6 +10,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// returned by InsertEntry when entry with same hash already exists
+var ErrDuplicateEntry = errors.New("duplicate entry")
+
 type Store struct {
 	db *sql.DB
 }
@@ -314,11 +317,20 @@ func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
 
 	// 1 Insert entry itself
 	result, err := tx.Exec(`
-		insert into entries (date, payee, raw_payee, memo, cleared)
-		values (?, ?, ?, ?, ?)
-	`, e.Date.Format("2006-01-02"), e.Payee, e.RawPayee, e.Memo, e.Cleared)
+		insert into entries (date, payee, raw_payee, memo, cleared, import_hash)
+		values (?, ?, ?, ?, ?, ?)
+		on conflict (import_hash) do nothing
+	`, e.Date.Format("2006-01-02"), e.Payee, e.RawPayee, e.Memo, e.Cleared,
+		sql.NullString{String: e.ImportHash, Valid: e.ImportHash != ""})
 	if err != nil {
 		return 0, fmt.Errorf("inserting entry: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("checking rows affected: %w", err)
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("entry %s/%s: %w", e.Date.Format("2006-01-02"), e.RawPayee, ErrDuplicateEntry)
 	}
 	entryID, err := result.LastInsertId()
 	if err != nil {
@@ -374,7 +386,7 @@ func (s *Store) UpdateEntry(e finance.Entry) error {
 func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	// 1. Load all entries
 	rows, err := s.db.Query(`
-		select id, date, payee, raw_payee, memo, cleared
+		select id, date, payee, raw_payee, memo, cleared, import_hash
 		from entries
 		order by date, id
 	`)
@@ -389,9 +401,11 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	for rows.Next() {
 		var e finance.Entry
 		var dateStr string
-		if err := rows.Scan(&e.ID, &dateStr, &e.Payee, &e.RawPayee, &e.Memo, &e.Cleared); err != nil {
+		var hash sql.NullString
+		if err := rows.Scan(&e.ID, &dateStr, &e.Payee, &e.RawPayee, &e.Memo, &e.Cleared, &hash); err != nil {
 			return nil, fmt.Errorf("scanning entry: %w", err)
 		}
+		e.ImportHash = hash.String
 		e.Date, err = time.Parse("2006-01-02", dateStr)
 		if err != nil {
 			return nil, fmt.Errorf("parsing date %q: %w", dateStr, err)
