@@ -145,7 +145,7 @@ func newHelpStyles(t Theme) help.Styles {
 	}
 }
 
-func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []int) TxnStyleFunc {
+func (s styles) entryStyleFuncFromIdx(entries []finance.Entry, accts map[int64]finance.Account, idx []int) TxnStyleFunc {
 	return func(row, col int, selected bool) lipgloss.Style {
 		base := s.tableCell
 
@@ -157,16 +157,17 @@ func (s styles) transactionStyleFuncFromIdx(txns []finance.Transaction, idx []in
 			return base
 		}
 
-		t := txns[idx[row]]
+		e := entries[idx[row]]
+		v := projectEntry(e, accts)
 
 		switch col {
 		case colAmount: // Amount
-			if t.Amount >= 0 {
+			if v.Amount >= 0 {
 				return base.Foreground(s.theme.Pine)
 			}
 			return base.Foreground(s.theme.Love).Align(lipgloss.Right)
 		case colCategory:
-			if t.Category == "" {
+			if v.Category == "" {
 				// TODO should use uncategorized style?
 				return base.Foreground(s.theme.Muted).Italic(true)
 			}

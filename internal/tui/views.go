@@ -43,13 +43,12 @@ func (m Model) View() tea.View {
 		content = header + "\n" + body + "\n" + footer
 
 	case categoryScreen:
-		txn := m.selectedTxn()
-		if txn == nil {
+		e := m.selectedEntry()
+		if e == nil {
 			content = m.styles.warning.Render("cursor out of bounds")
 			break
 		}
-		t := *txn
-		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", t.Payee))
+		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", e.Payee))
 		prompt := m.styles.prompt.Render("Category: ")
 		input := m.catInput.View()
 
@@ -67,11 +66,11 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) renderDetail() string {
-	txn := m.selectedTxn()
-	if txn == nil {
+	e := m.selectedEntry()
+	if e == nil {
 		return m.styles.warning.Render("cursor out of bounds")
 	}
-	t := *txn
+	v := projectEntry(*e, m.accountsByID)
 
 	var b strings.Builder
 	row := func(label, value string) {
@@ -81,30 +80,32 @@ func (m Model) renderDetail() string {
 	}
 
 	b.WriteString("\n")
-	row("Date", t.Date.Format("2006-01-02 (Monday)"))
-	row("Payee", t.Payee)
-	row("Amount", m.styles.amountStyle(t.Amount).Render(t.Amount.String()))
-	row("Account", t.Account)
+	row("Date", e.Date.Format("2006-01-02 (Monday)"))
+	row("Payee", e.Payee)
+	row("Amount", m.styles.amountStyle(v.Amount).Render(v.Amount.String()))
+	row("Account", v.Account)
 
-	if t.Category != "" {
-		row("Category", m.styles.category.Render(t.Category))
+	if e.Cleared {
+		row("Category", m.styles.category.Render(v.Category))
 
 	} else {
-		row("Category", m.styles.uncategorized.Render(uncategorized))
+		row("Category", m.styles.uncategorized.Render(v.Category+" (unrewviewed)"))
 
 	}
 	b.WriteString("\n")
 
 	// Show other transactions from the same payee
-	b.WriteString(m.styles.sectionTitle.MarginTop(1).Render("Other transactions from " + t.Payee))
+	b.WriteString(m.styles.sectionTitle.MarginTop(1).Render("Other transactions from " + e.Payee))
 	b.WriteString("\n\n")
 
 	count := 0
-	for _, other := range m.transactions {
-		if other.Payee == t.Payee && other.Date != t.Date {
+	for i := range m.entries {
+		other := m.entries[i]
+		if other.Payee == e.Payee && !other.Date.Equal(e.Date) {
+			ov := projectEntry(other, m.accountsByID)
 			fmt.Fprintf(&b, " %s %s\n",
 				other.Date.Format("2006-01-02"),
-				m.styles.amountStyle(other.Amount).Render(other.Amount.String()),
+				m.styles.amountStyle(ov.Amount).Render(ov.Amount.String()),
 			)
 			count++
 			if count >= 10 {
@@ -125,6 +126,7 @@ func (m Model) renderDetail() string {
 
 // per-account and pe-category summary view
 func (m Model) renderSummary() string {
+	// NOTE: net worth is not the sum of the category rows anymore should fix!
 	var b strings.Builder
 
 	// Accounts table
@@ -166,7 +168,7 @@ func (m Model) renderSummary() string {
 	}
 
 	// add last row with total
-	categoryRows = append(categoryRows, []string{"Total", m.styles.amountStyle(m.totalBalance).Render(m.totalBalance.String())})
+	categoryRows = append(categoryRows, []string{"Total", m.styles.amountStyle(m.netWorth).Render(m.netWorth.String())})
 	ct := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(m.styles.tableBorder).
@@ -231,9 +233,9 @@ func (m Model) renderStatusLine() string {
 	}
 
 	// Right: transaction count
-	total := len(m.transactions)
+	total := len(m.entries)
 	filtered := m.table.SearchedCount()
-	structFiltered := len(m.filteredTxns)
+	structFiltered := len(m.filteredEntries)
 	var msg string
 	if filtered < structFiltered {
 		msg = fmt.Sprintf("%d of %d transactions", filtered, total)

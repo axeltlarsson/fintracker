@@ -487,3 +487,27 @@ q            quit
 
 **Next:** dedup design discussion → then the wiring: `SeedPayeeRules` in `main.go`, rework `importAllCmd`/`parseAllFiles` (EnsureAccount sequential before fan-out, parse parallel, InsertEntry sequential after join — no DB in goroutines, SQLITE_BUSY), display shim for entries.
 
+### Session 12 — Phase 14 continued (import dedup, custom sentinel error)
+**Date:** 2026-06-13
+**Covered:** The import-idempotency design problem and its full implementation.
+
+**The identity problem:** SEB CSV gives only date/amount/payee — no bank transaction ID. "Don't import twice" requires defining what makes two rows the same, and the killer test case is two legitimately-distinct identical rows (two 45 kr coffees, same day). Realized the OLD `unique(date,amount,payee,account)` upsert had been silently *merging* the second coffee all along — a latent data-loss bug in the flat model.
+
+**Chosen design — content hash + occurrence counter (option C):** `hash(date | amount | raw_payee | n)` where `n` counts prior identical rows *within the same file*. Re-import same file → identical hashes → deduped. Overlapping rolling-window exports → shared rows get same hashes → deduped. Two distinct coffees → different `n` → both kept. This is how OFX FITID synthesis works when banks omit IDs. Rejected: porting old unique constraint (fails coffee test), whole-file hashing (fails on overlapping exports).
+
+**`stampHashes(rows []RawRow)`:** unexported step of `Import`, runs over the WHOLE file before the matched/unmatched split (so the counter sees every row). `map[string]int` occurrence accumulator (same pattern as `Validate()` currency sums). `crypto/sha256` + `encoding/hex`. Count is the last `|`-delimited token and always digits → no collision even with `|` in payee. Increment-before-read (1,2,3…) vs after (0,1,2…) doesn't matter — only determinism + distinctness do, and both hold. Mutates via `rows[i].Hash` (Session 6: `range` value copy can't mutate the slice).
+
+**Schema (migration 3→4):** `alter table entries add column import_hash text` + `create unique index idx_entries_import_hash`. SQLite UNIQUE indexes permit unlimited NULLs → manual entries (no hash) never collide.
+
+**`Entry.ImportHash string` — why string not `*string`:** both nullable, but choose pointer only when the zero value could be mistaken for real data. Account ID `0` looks plausible → needed `*int64`. Empty string is never a valid SHA hex digest → `""` is self-evidently absent. Rule refined: "nullable → pointer" is wrong; "ambiguous zero value → pointer" is right. NULL conversion happens at the store boundary, domain type stays pointer-free.
+
+**Custom sentinel error `store.ErrDuplicateEntry` (producer side of the pattern):** `var ErrDuplicateEntry = errors.New(...)`, package-level, exported, `Err` prefix. `InsertEntry` insert grows `on conflict (import_hash) do nothing` (precise — suppresses ONLY hash collisions, other constraints still error, unlike `insert or ignore`), checks `RowsAffected()==0`, returns the sentinel WRAPPED with context (`%w`) so `errors.Is` still finds it through the chain. Caller treats it as "skipped" not "failed". This session covered BOTH sides of the sentinel pattern: consuming `sql.ErrNoRows` (EnsureAccount) + producing `ErrDuplicateEntry`.
+
+**`sql.NullString` both directions:** write side — `sql.NullString{String: e.ImportHash, Valid: e.ImportHash != ""}` so `""`→NULL. Read side (`LoadEntries`) — scan into `sql.NullString` intermediary, `e.ImportHash = hash.String` (`""` when NULL, no guard needed unlike the `*int64` address-taking case). Found via test failure: `converting NULL to string is unsupported`.
+
+**Test discipline:** store dedup test uses a FIXED string hash (`"test-hash-1"`), NOT a computed one — store enforces uniqueness, doesn't care about hash content; computation is tested separately in importer. Caught a test-data bug (postings referencing phantom account IDs → FK violation; fixed by `InsertAccount` first like `TestInsertAndLoadEntry`). "Impossible" failure message (error printing two EQUAL strings) = stale test binary / inverted condition — check what actually ran.
+
+**Concepts practiced:** content-addressable dedup / synthetic IDs, occurrence-counter accumulator, custom sentinel errors (producing, not just consuming), `errors.Is` through `%w` wrapping, `sql.NullString` read+write, pointer-vs-value field choice by zero-value ambiguity, `on conflict do nothing` vs `insert or ignore`, test isolation (don't couple a store test to an importer algorithm).
+
+**Next:** the actual TUI wiring. `SeedPayeeRules(DefaultRules())` in `main.go` after `NewStore`. Rework `importAllCmd`/`parseAllFiles`: `EnsureAccount` (source paths + `Equity:Uncategorized`) sequential before fan-out, `importer.Import` + `PlaceholderEntries` parallel in goroutines (pure, no DB), `InsertEntry` loop sequential after join (SQLITE_BUSY — no concurrent writers), count `ErrDuplicateEntry` as skipped in `ImportDoneMsg`. Then the display question: views consume flat `Transaction` — need an `Entry`→display shim or start migrating views (Phase 15 territory).
+

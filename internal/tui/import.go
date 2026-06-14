@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
-	"fintracker/internal/finance"
-	"fintracker/internal/parser"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"os"
+
+	"golang.org/x/sync/errgroup"
+
+	"fintracker/internal/finance"
+	"fintracker/internal/importer"
 )
 
 type ImportFileProgress struct {
@@ -14,41 +16,41 @@ type ImportFileProgress struct {
 	Count   int // transactions parsed from this file
 }
 
-func parseAllFiles(ctx context.Context, specs []ImportSpec, progress chan<- ImportFileProgress) ([]finance.Transaction, error) {
-	// errgroup.WithContext gives you:
-	// - g the group
-	// - ctx - a derivec context that cancels if any goroutine errors out
+// parses and transforms each CSV into ledger entries in parallel
+func importAllFiles(
+	ctx context.Context,
+	specs []ImportSpec,
+	sourceIDs []int64, // sourceID[i] is the resolved account ID for specs[i]
+	placeholderID int64,
+	rules []finance.PayeeRule,
+	progress chan<- ImportFileProgress,
+) ([]finance.Entry, error) {
 	g, ctx := errgroup.WithContext(ctx)
-
-	// one slice per goroutine - no mutext needed
-	results := make([][]finance.Transaction, len(specs))
+	results := make([][]finance.Entry, len(specs))
 
 	for i, spec := range specs {
-		// launch a goroutine for each spec using
 		g.Go(func() error {
-			// open the file at spec.Path
 			f, err := os.Open(spec.Path)
 			if err != nil {
 				return fmt.Errorf("opening %s: %w", spec.Path, err)
 			}
 			defer f.Close()
-			txns, err := parser.ParseTransactions(f, spec.Account)
+
+			res, err := importer.Import(f, importer.SEBFormat{}, sourceIDs[i], rules)
 			if err != nil {
-				return fmt.Errorf("parsing %s: %w", spec.Path, err)
+				return fmt.Errorf("importing %s: %w", spec.Path, err)
 			}
+			entries := res.Entries
+			entries = append(entries, importer.PlaceholderEntries(res.Unmatched, sourceIDs[i], placeholderID)...)
+			results[i] = entries
 
-			results[i] = txns
-
-			// signal progress (or bail if context cancelled)
 			select {
-			case progress <- ImportFileProgress{
-				Account: spec.Account,
-				Count:   len(txns),
-			}:
+			case progress <- ImportFileProgress{Account: spec.Account, Count: len(entries)}:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 			return nil
+
 		})
 	}
 
@@ -56,12 +58,10 @@ func parseAllFiles(ctx context.Context, specs []ImportSpec, progress chan<- Impo
 		return nil, err
 	}
 
-	// flatten results
-	var all []finance.Transaction
-	for _, txns := range results {
-		all = append(all, txns...)
+	var all []finance.Entry
+	for _, e := range results {
+		all = append(all, e...)
 	}
 
 	return all, nil
-
 }

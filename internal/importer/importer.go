@@ -10,9 +10,9 @@ import (
 
 	"fintracker/internal/finance"
 
-	"gopkg.in/yaml.v3"
 	"crypto/sha256"
 	"encoding/hex"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed default_rules.yaml
@@ -54,7 +54,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 	var result ImportResult
 	for _, row := range rows {
 		rule, ok := matchRule(row.RawPayee, sorted)
-		if !ok {
+		if !ok || rule.DefaultAccountID == nil {
 			result.Unmatched = append(result.Unmatched, row)
 			continue
 		}

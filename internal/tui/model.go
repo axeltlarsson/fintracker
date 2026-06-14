@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -36,13 +37,14 @@ type ImportSpec struct {
 
 type Model struct {
 	// Data
-	transactions    []finance.Transaction
-	filteredTxns    []int // indices into transactions
-	totalBalance    finance.Öre
+	entries         []finance.Entry
+	accountsByID    map[int64]finance.Account
+	filteredEntries []int
+	netWorth        finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
-	rules           []finance.Rule
-	categories      []string
+	rules           []finance.Rule // TODO: retired in import-wirign step
+	categories      []string       // TODO: revisited when categorisation moves to phase 15
 	store           *store.Store
 
 	// Import state
@@ -75,27 +77,27 @@ type Model struct {
 }
 
 func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []ImportSpec) (Model, error) {
-	txns, err := store.LoadTransactions()
+	entries, err := store.LoadEntries()
 
 	if err != nil {
 		return Model{}, err
 	}
 
+	accounts, err := store.LoadAccounts()
+	if err != nil {
+		return Model{}, err
+	}
+	accountsByID := make(map[int64]finance.Account, len(accounts))
+	for _, a := range accounts {
+		accountsByID[a.ID] = a
+	}
+
 	theme := RoséPineMain // default to dark
 	st := newStyles(theme)
 
-	// Apply rules to any uncategorised transactions
-	if len(txns) > 0 {
-		if matched := finance.Categorize(txns, rules); matched > 0 {
-			if _, err := store.UpsertTransactions(txns); err != nil {
-				return Model{}, fmt.Errorf("saving categorized transactions: %w", err)
-			}
-		}
-	}
-
 	cols := buildCols()
-	visibleIdx := initialVisibleIdx(len(txns))
-	rows := buildRowsFromIdx(txns, visibleIdx)
+	visibleIdx := initialVisibleIdx(len(entries))
+	rows := buildRowsFromIdx(entries, accountsByID, visibleIdx)
 
 	t := NewTxnTable(
 		// Data
@@ -105,7 +107,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		WithTxnFocused(true),
 		WithTxnHeight(20),
 		// Appearance - from styles, model just wires it up
-		WithTxnStyleFunc(st.transactionStyleFuncFromIdx(txns, visibleIdx)),
+		WithTxnStyleFunc(st.entryStyleFuncFromIdx(entries, accountsByID, visibleIdx)),
 		WithTxnHeaderStyle(st.tableHeader),
 		WithTxnBorderStyle(st.tableBorder),
 	)
@@ -129,13 +131,13 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 
 	return Model{
 		// Data
-		transactions:    txns,
-		filteredTxns:    visibleIdx,
-		totalBalance:    finance.CalculateBalance(txns),
-		accountSummary:  buildAccountSummary(txns),
-		categorySummary: buildCategorySummary(txns),
+		entries:         entries,
+		accountsByID:    accountsByID,
+		netWorth:        netWorth(entries, accountsByID),
+		accountSummary:  buildAccountSummary(entries, accountsByID),
+		categorySummary: buildCategorySummary(entries, accountsByID),
 		rules:           rules,
-		categories:      collectCategories(txns, rules),
+		categories:      nil, // todo in phase 15
 		store:           store,
 
 		// Import state
@@ -149,7 +151,7 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		catKeys:  catKeys,
 
 		// UI state
-		accounts:    collectAccounts(txns),
+		accounts:    collectAccounts(entries, accountsByID),
 		searchInput: si,
 
 		// Theming
@@ -188,10 +190,10 @@ func collectCategories(txns []finance.Transaction, rules []finance.Rule) []strin
 	return cats
 }
 
-func collectAccounts(txns []finance.Transaction) []string {
+func collectAccounts(entries []finance.Entry, accts map[int64]finance.Account) []string {
 	seen := make(map[string]bool)
-	for _, t := range txns {
-		seen[t.Account] = true
+	for _, e := range entries {
+		seen[projectEntry(e, accts).Account] = true
 	}
 	accs := make([]string, 0, len(seen))
 	for a := range seen {
@@ -199,28 +201,48 @@ func collectAccounts(txns []finance.Transaction) []string {
 	}
 	sort.Strings(accs)
 	return accs
+
 }
 
-func buildAccountSummary(txns []finance.Transaction) map[string]finance.Öre {
-	summary := make(map[string]finance.Öre)
+// sums postings on Asset and Liability accounts
+func netWorth(entries []finance.Entry, accts map[int64]finance.Account) finance.Öre {
+	var total finance.Öre
+	for _, e := range entries {
+		for _, p := range e.Postings {
+			switch accts[p.AccountID].Type {
+			case finance.Assets, finance.Liabilities:
+				total += p.Amount
+			}
+		}
+	}
+	return total
+}
 
-	for _, t := range txns {
-		summary[t.Account] += t.Amount
+// returns the balance of each Asset/Liability account
+func buildAccountSummary(entries []finance.Entry, accts map[int64]finance.Account) map[string]finance.Öre {
+	summary := make(map[string]finance.Öre)
+	for _, e := range entries {
+		for _, p := range e.Postings {
+			a := accts[p.AccountID]
+			switch a.Type {
+			case finance.Assets, finance.Liabilities:
+				summary[a.Path] += p.Amount
+			}
+		}
 	}
 	return summary
 }
 
-func buildCategorySummary(txns []finance.Transaction) map[string]finance.Öre {
-
-	// amount per category
+func buildCategorySummary(entries []finance.Entry, accts map[int64]finance.Account) map[string]finance.Öre {
 	summary := make(map[string]finance.Öre)
-
-	for _, t := range txns {
-		c := t.Category
-		if t.Category == "" {
-			c = "(uncategorised)"
+	for _, e := range entries {
+		for _, p := range e.Postings {
+			a := accts[p.AccountID]
+			switch a.Type {
+			case finance.Income, finance.Expenses:
+				summary[a.Path] += p.Amount
+			}
 		}
-		summary[c] += t.Amount
 	}
 	return summary
 }
@@ -242,15 +264,48 @@ func (m Model) importAllCmd() tea.Cmd {
 
 	doImportCmd := func() tea.Msg {
 		defer close(progress)
-		txns, err := parseAllFiles(context.Background(), specs, progress)
+		// 1. resolve accounts (DB writes) before the parallel fan out
+		placeholderID, err := s.EnsureAccount("Equity:Uncategorized")
+		if err != nil {
+			return ImportErrMsg{Err: fmt.Errorf("placeholder account: %w", err)}
+		}
+		sourceIDs := make([]int64, len(specs))
+		for i, spec := range specs {
+			id, err := s.EnsureAccount(spec.Account)
+			if err != nil {
+				return ImportErrMsg{Err: fmt.Errorf("source account %q: %w", spec.Account, err)}
+			}
+			sourceIDs[i] = id
+		}
+
+		// 2. load payee rules (read)
+		rules, err := s.LoadPayeeRules()
 		if err != nil {
 			return ImportErrMsg{Err: err}
 		}
-		inserted, err := s.UpsertTransactions(txns)
+
+		// 3. parse + transform in parallel (pure, no db)
+		entries, err := importAllFiles(context.Background(), specs, sourceIDs, placeholderID, rules, progress)
 		if err != nil {
-			return ImportErrMsg{Err: fmt.Errorf("storing transactions: %w", err)}
+			return ImportErrMsg{Err: err}
 		}
-		return ImportDoneMsg{Total: len(txns), Inserted: inserted}
+
+		// 4. insert entries sequentially (DB writes)
+		var count, skipped int
+		for _, e := range entries {
+			_, err := s.InsertEntry(e)
+			if errors.Is(err, store.ErrDuplicateEntry) {
+				// skip duplicate entries
+				skipped++
+				continue
+			}
+			if err != nil {
+				return ImportErrMsg{Err: err}
+			}
+			count++
+		}
+
+		return ImportDoneMsg{Total: len(entries), Inserted: count, Duplicates: skipped}
 	}
 
 	listenProgressCmd := listenForProgress(progress)
@@ -287,8 +342,9 @@ type ImportProgressMsg struct {
 	Progress <-chan ImportFileProgress
 }
 type ImportDoneMsg struct {
-	Total    int // total txns imported
-	Inserted int // new rows inserted
+	Total      int // total txns imported
+	Inserted   int // new rows inserted
+	Duplicates int // skipped rows (duplicates)
 }
 
 type ImportErrMsg struct {
@@ -308,7 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.filteredTxns))
+		m.table.SetStyleFunc(m.styles.entryStyleFuncFromIdx(m.entries, m.accountsByID, m.filteredEntries))
 		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
@@ -352,24 +408,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForProgress(msg.Progress)
 
 	case ImportDoneMsg:
-		// reload transactions from store to include newly import ones
-		txns, err := m.store.LoadTransactions()
+		// reload entries from store to include newly import ones
+		entries, err := m.store.LoadEntries()
 		if err != nil {
 			return m, tea.Quit
 		}
-		// re-apply rules
-		if matched := finance.Categorize(txns, m.rules); matched > 0 {
-			m.store.UpsertTransactions(txns)
+		accounts, err := m.store.LoadAccounts()
+		if err != nil {
+			return m, tea.Quit
 		}
-		m.transactions = txns
-		m.totalBalance = finance.CalculateBalance(txns)
-		m.accountSummary = buildAccountSummary(txns)
-		m.categorySummary = buildCategorySummary(txns)
-		m.categories = collectCategories(txns, m.rules)
-		m.accounts = collectAccounts(txns)
+		accountsByID := make(map[int64]finance.Account, len(accounts))
+		m.entries = entries
+		m.accountsByID = accountsByID
+		m.netWorth = netWorth(entries, accountsByID)
+		m.accountSummary = buildAccountSummary(entries, accountsByID)
+		m.categorySummary = buildCategorySummary(entries, accountsByID)
+		m.accounts = collectAccounts(entries, accountsByID)
 		m.refreshTable()
 
-		m.importStatus = fmt.Sprintf("Imported %d transactions (%d new)", msg.Total, msg.Inserted)
+		m.importStatus = fmt.Sprintf("Imported %d transactions (%d new, %d duplicates)", msg.Total, msg.Inserted, msg.Duplicates)
 		return m, nil
 
 	case ImportErrMsg:
@@ -489,42 +546,39 @@ func buildCols() []TxnColumn {
 	}
 }
 
-func buildRowsFromIdx(txns []finance.Transaction, idx []int) [][]string {
+func buildRowsFromIdx(entries []finance.Entry, accts map[int64]finance.Account, idx []int) [][]string {
 	rows := make([][]string, 0, len(idx))
 	for _, i := range idx {
-		t := txns[i]
-		cat := t.Category
-		if cat == "" {
-			cat = uncategorized
-		}
+		e := entries[i]
+		v := projectEntry(e, accts)
 		rows = append(rows, []string{
-			t.Date.Format("2006-01-02"),
-			t.Payee,
-			t.Amount.String(),
-			t.Account,
-			cat,
+			e.Date.Format("2006-01-02"),
+			e.Payee,
+			v.Amount.String(),
+			v.Account,
+			v.Category,
 		})
 	}
 	return rows
 }
 
-// selectedTxn returns a pointer to the transactions under the cursor
-func (m *Model) selectedTxn() *finance.Transaction {
-	if len(m.filteredTxns) == 0 {
+// selectedEntry returns a pointer to the transactions under the cursor
+func (m *Model) selectedEntry() *finance.Entry {
+	if len(m.filteredEntries) == 0 {
 		return nil
 	}
-	return &m.transactions[m.filteredTxns[m.table.Cursor()]]
+	return &m.entries[m.filteredEntries[m.table.Cursor()]]
 }
 func (m *Model) refreshTable() {
-	m.filteredTxns = m.filteredTxns[:0]
-	for i, t := range m.transactions {
-		if m.filterAccount != "" && t.Account != m.filterAccount {
+	m.filteredEntries = m.filteredEntries[:0]
+	for i, e := range m.entries {
+		if m.filterAccount != "" && projectEntry(e, m.accountsByID).Account != m.filterAccount {
 			continue
 		}
-		m.filteredTxns = append(m.filteredTxns, i)
+		m.filteredEntries = append(m.filteredEntries, i)
 	}
-	m.table.SetRows(buildRowsFromIdx(m.transactions, m.filteredTxns))
-	m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.filteredTxns))
+	m.table.SetRows(buildRowsFromIdx(m.entries, m.accountsByID, m.filteredEntries))
+	m.table.SetStyleFunc(m.styles.entryStyleFuncFromIdx(m.entries, m.accountsByID, m.filteredEntries))
 }
 
 func (m Model) nextAccount() string {
@@ -586,20 +640,11 @@ func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// apply category
-			txn := m.selectedTxn()
-			txn.Category = value
-
-			// persist to database
-			if m.store != nil {
-				if err := m.store.UpdateCategory(*txn); err != nil {
-					_ = err // for now silently ignore
-				}
-			}
+			// apply category TODO?
 
 			// update derived state
-			m.accountSummary = buildAccountSummary(m.transactions)
-			m.categorySummary = buildCategorySummary(m.transactions)
+			m.accountSummary = buildAccountSummary(m.entries, m.accountsByID)
+			m.categorySummary = buildCategorySummary(m.entries, m.accountsByID)
 			if !contains(m.categories, value) {
 				m.categories = append(m.categories, value)
 				sort.Strings(m.categories)

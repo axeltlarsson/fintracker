@@ -5,67 +5,80 @@ import (
 	"testing"
 )
 
-func TestParseAllFiles(t *testing.T) {
+func TestImportAllFiles(t *testing.T) {
 	specs := []ImportSpec{
 		{Path: "testdata/bank_a.csv", Account: "SEB"},
 		{Path: "testdata/bank_b.csv", Account: "Nordea"},
 	}
 
+	sourceIDs := []int64{1, 2}
+	const placeholderID = 99
+
 	progress := make(chan ImportFileProgress, len(specs))
 
-	txns, err := parseAllFiles(context.Background(), specs, progress)
+	// nil rules -> every row is unmatched -> placeholder entries
+	entries, err := importAllFiles(context.Background(), specs, sourceIDs, placeholderID, nil, progress)
 	if err != nil {
-		t.Fatalf("parseAllFiles: %v", err)
+		t.Fatalf("importAllFiles: %v", err)
 	}
-
-	// drain progress channel
 	close(progress)
-	var progressMsgs []ImportFileProgress
+
+	var msgs []ImportFileProgress
 	for msg := range progress {
-		progressMsgs = append(progressMsgs, msg)
+		msgs = append(msgs, msg)
 	}
-	if len(progressMsgs) != 2 {
-		t.Errorf("got %d progress messages, want 2", len(progressMsgs))
+	if len(msgs) != 2 {
+		t.Errorf("got %d progress messages, want 2", len(msgs))
 	}
-	if len(txns) != 5 {
-		t.Errorf("got %d transactions, want 5", len(txns))
+	if len(entries) != 5 {
+		t.Errorf("got %d entries, want 5", len(entries))
 	}
 
-	// Verify both accounts are present
-	accounts := make(map[string]int)
-	for _, tx := range txns {
-		accounts[tx.Account]++
+	// each entry: balanced double posting, source posting + placeholder counter
+	bySource := make(map[int64]int)
+	for _, e := range entries {
+		if err := e.Validate(); err != nil {
+			t.Errorf("entry doesn't validate: %v", err)
+		}
+		if len(e.Postings) != 2 {
+			t.Fatalf("entry has %d postings, want 2", len(e.Postings))
+		}
+		bySource[e.Postings[0].AccountID]++
+		if e.Postings[1].AccountID != placeholderID {
+			t.Errorf("counter account != %d, want placeholder %d", e.Postings[1].AccountID, placeholderID)
+		}
 	}
-	if accounts["SEB"] != 2 {
-		t.Errorf("SEB transactions = %d, want 2", accounts["SEB"])
+	if bySource[1] != 2 {
+		t.Errorf("SEB transactions = %d, want 2", bySource[1])
 	}
-	if accounts["Nordea"] != 3 {
-		t.Errorf("Nordea transactions = %d, want 3", accounts["Nordea"])
+	if bySource[2] != 3 {
+		t.Errorf("Nordea transactions = %d, want 3", bySource[2])
 	}
 
 }
 
-func TestParseAllFilesEmpty(t *testing.T) {
+func TestImportAllFilesEmpty(t *testing.T) {
 	progress := make(chan ImportFileProgress)
 
-	txns, err := parseAllFiles(context.Background(), nil, progress)
+	entries, err := importAllFiles(context.Background(), nil, nil, 99, nil, progress)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(txns) != 0 {
-		t.Errorf("got %d transations, wawnt 0", len(txns))
+	if len(entries) != 0 {
+		t.Errorf("got %d entries, want 0", len(entries))
 	}
 }
 
-func TestParseAllFilesBadPath(t *testing.T) {
+func TestImportAllFilesBadPath(t *testing.T) {
 	specs := []ImportSpec{
 		{Path: "testdata/bank_a.csv", Account: "SEB"},
 		{Path: "testdata/nonexistent.csv", Account: "Ghost"},
 	}
 
-	progress := make(chan ImportFileProgress)
+	sourceIDs := []int64{1, 2}
+	progress := make(chan ImportFileProgress) // unbuffered
 
-	_, err := parseAllFiles(context.Background(), specs, progress)
+	_, err := importAllFiles(context.Background(), specs, sourceIDs, 99, nil, progress)
 
 	if err == nil {
 		t.Fatalf("expected error for missing file, got nil")

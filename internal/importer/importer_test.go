@@ -13,12 +13,14 @@ func TestImport(t *testing.T) {
 	input := strings.NewReader(
 		"2026-04-01;-490,00; ICA Skanör\n" +
 			"2026-04-02;-99,00;SPOTIFY AB\n" +
-			"2026-04-03;-250,00;OKÄND BUTIK\n",
+			"2026-04-03;-250,00;OKÄND BUTIK\n" +
+			"2026-06-03;-250,00;temple of spices\n",
 	)
 
 	rules := []finance.PayeeRule{
 		{Pattern: "ICA", NormalizedPayee: "ICA", DefaultAccountID: ptr(10), Priority: 0},
 		{Pattern: "SPOTIFY", NormalizedPayee: "Spotify", DefaultAccountID: ptr(11), Priority: 0},
+		{Pattern: "TEMPLE OF SPICES", NormalizedPayee: "Temple of Spices", DefaultAccountID: nil},
 	}
 	result, err := Import(input, SEBFormat{}, 1, rules)
 	if err != nil {
@@ -28,8 +30,8 @@ func TestImport(t *testing.T) {
 	if len(result.Entries) != 2 {
 		t.Errorf("got %d entries, want 2", len(result.Entries))
 	}
-	if len(result.Unmatched) != 1 {
-		t.Errorf("got %d unmatched entries want 1", len(result.Unmatched))
+	if len(result.Unmatched) != 2 {
+		t.Errorf("got %d unmatched entries want 2", len(result.Unmatched))
 	}
 
 	if result.Entries[0].Payee != "ICA" {
@@ -47,6 +49,7 @@ func TestImport(t *testing.T) {
 	if result.Entries[0].Validate() != nil {
 		t.Errorf("posting should Validate successfully")
 	}
+
 }
 
 func TestDefaultRules(t *testing.T) {
