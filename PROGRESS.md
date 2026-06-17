@@ -511,3 +511,44 @@ q            quit
 
 **Next:** the actual TUI wiring. `SeedPayeeRules(DefaultRules())` in `main.go` after `NewStore`. Rework `importAllCmd`/`parseAllFiles`: `EnsureAccount` (source paths + `Equity:Uncategorized`) sequential before fan-out, `importer.Import` + `PlaceholderEntries` parallel in goroutines (pure, no DB), `InsertEntry` loop sequential after join (SQLITE_BUSY — no concurrent writers), count `ErrDuplicateEntry` as skipped in `ImportDoneMsg`. Then the display question: views consume flat `Transaction` — need an `Entry`→display shim or start migrating views (Phase 15 territory).
 
+### Session 13 — TUI migrated to the double-entry model + import pipeline wired (Phase 14, near-complete)
+**Date:** 2026-06-14 to 2026-06-17
+**Decision:** No display shim — migrate the Model + views to consume `[]finance.Entry` directly, retire the flat `Transaction`, then rename `Entry` → `Transaction` (the roadmap's intended end state). Big blast radius, done in sequenced steps; package compiled green at the end of each step.
+
+**`entryView` + `projectEntry` (`internal/tui/entryview.go`):** the chokepoint that flattens a header+postings `Entry` into the one row the UI shows. View-model, NOT a shim — Model's source of truth is `[]finance.Entry`; `entryView` is a throwaway render-time projection (domain model vs view model = healthy split). Rule: view from the **asset/liability** posting → it gives Account + Amount; the contra posting gives Category; `"(split)"` when >2 postings. `projectEntry` finds the FIRST asset/liability posting (break — don't let later asset postings clobber, matters for transfers; import convention puts source posting first and the DB preserves order via `order by id`). Fully tested incl. order-independence + transfer + split.
+
+**Model migration (`model.go`, `views.go`, `styles.go`):** `transactions []finance.Transaction` → `entries []finance.Entry`; added `accountsByID map[int64]finance.Account` (resolves posting AccountID → path/type, loaded once via `LoadAccounts`); `filteredTxns`→`filteredEntries`; `selectedTxn`→`selectedEntry` (returns `*finance.Entry`); `transactionStyleFuncFromIdx`→`entryStyleFuncFromIdx`. All display helpers (`buildRowsFromIdx`, summaries, `collectAccounts`, styleFunc, `renderDetail`) now project entries. **Field `totalBalance` renamed `netWorth`** — summing ALL postings in a balanced ledger is always 0, so total must mean something specific: net of Asset+Liability postings. Summaries split by account type: `buildAccountSummary` = Asset/Liability balances, `buildCategorySummary` = Income/Expense balances (every account has a balance; "spent on groceries" = balance of `Expenses:Food:Groceries`). styleFunc dims the category cell on `!e.Cleared` (review state) instead of the old `Category==""`.
+
+**Import pipeline rewired (`import.go`, `importAllCmd` in `model.go`):** `parseAllFiles`→`importAllFiles` returning `[]finance.Entry`, PURE (no DB) — same errgroup/`select`+`ctx.Done()` leak guard from Sessions 3–4, carried forward unchanged. Orchestration shape in `importAllCmd`: (1) `EnsureAccount` for `Equity:Uncategorized` + each spec's source path — DB WRITES, sequential, BEFORE fan-out; (2) `LoadPayeeRules`; (3) `importAllFiles` parallel parse+`importer.Import`+`PlaceholderEntries` (pure); (4) `InsertEntry` loop sequential AFTER join, `errors.Is(err, store.ErrDuplicateEntry)`→skip (count `skipped`), other err→`ImportErrMsg`, else `inserted`. No DB writes in goroutines — SQLite tolerates concurrent readers, not writers. `ImportDoneMsg` gained `Skipped int`; status line shows "(N new, M duplicates)".
+
+**Bug caught & fixed (`importer.Import`):** matched rule with `nil DefaultAccountID` (every freshly-seeded rule, since `DefaultRules()` sets no account) → `*rule.DefaultAccountID` panic. Fix: `if !ok || rule.DefaultAccountID == nil { → Unmatched }`. Account-less match routes to review queue (placeholder), losing normalized payee until Phase 15 assigns the account. This is the `*int64` (Session 10) optional-as-pointer choice billing us: every `*T` deref across a boundary is a nil-check Go won't enforce.
+
+**Concepts practiced:** domain-model vs view-model projection, asset-side ledger register semantics, net worth vs naive sum, summaries as per-account-type balances, pure-function fan-out (DB writes bracket the parallel section), `errors.Is` sentinel-skip in a real loop, nil-pointer discipline on optional `*T` fields, sequenced big-refactor (compile-green per step), Go field/function namespace separation (`m.netWorth` field + `netWorth()` func coexist).
+
+**Status:** all packages build; `go test ./...` green; working tree committed at `550d723` "Wire up new double-entry ledger into tui".
+
+---
+
+## 🔧 HANDOFF — pick up here (Phase 14 wrap → Phase 15)
+
+Everything below is NOT yet done. Ordered. The repo builds and tests pass as-is, but the import path is wired and NOT yet end-to-end-verified, and `main.go` does not seed rules yet.
+
+**1. `main.go` seeding — NOT APPLIED (do first).** After `NewStore`, add (and import `"fintracker/internal/importer"`):
+```go
+// Seed default payee rules on first run (idempotent — no-op once populated).
+defaults, err := importer.DefaultRules()
+if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); os.Exit(1) }
+if _, err := s.SeedPayeeRules(defaults); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); os.Exit(1) }
+```
+
+**2. Verify the pipeline end-to-end.** TUI can't run headless. Either run in a real terminal:
+`go run ./cmd/fintracker -db /tmp/ft.db "Assets:Bank:SEB=testdata/seb.csv"` (note the NEW `=` separator and full account PATH, not "seb"), or write a throwaway driver in `/tmp` exercising EnsureAccount→Import→InsertEntry→LoadEntries against `testdata/seb.csv` and assert entries come back balanced. Confirm: re-running the same import reports duplicates skipped (idempotency), and unmatched rows land on `Equity:Uncategorized` as `cleared=false`.
+
+**3. Step 5 — retire the flat model.** Delete: `finance.Transaction` + `CalculateBalance` (`transaction.go` — keep `Öre`!); `categorize.go` (`Rule`/`LoadRules`/`Categorize`); store `LoadTransactions`/`UpsertTransactions`/`UpdateCategory`. KEEP the old `transactions` table migration (historical — never edit past migrations). In `tui`: remove `collectCategories`, the `rules []finance.Rule` field, the `rules` param on `InitialModelFromStore`. In `main.go`: remove the `-rules` flag + `finance.LoadRules`. Make the `c`/category screen an HONEST stub (currently it collects input and silently does nothing — line ~643 `// apply category TODO?`): either show "review comes in Phase 15" or disable the key. Real account-reassignment review = Phase 15.
+
+**4. Step 6 — rename `Entry` → `Transaction`** via gopls rename, once the flat `Transaction` is gone and nothing collides. Revisit `entryView`/`projectEntry` naming after.
+
+**5. Deferred polish (note, don't block):** (a) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong now (different account types); relabel/reposition. (b) `renderDetail` "Other transactions from <payee>" groups by payee — empty payee (unmatched entries) groups them all; guard. (c) DRY the three identical "load entries+accounts, build accountsByID, recompute derived state" sites (`InitialModelFromStore`, `ImportDoneMsg` handler, and import) into `func (m *Model) reload() error` — do this AFTER the shape stops moving, not before.
+
+**Still-uncovered Go concepts (opportunistic):** `errors.As` + a custom error *struct* type (FK-violation on bad account_id is the natural trigger — `errors.Is` is done via `ErrDuplicateEntry`/`sql.ErrNoRows`); generics; benchmarking; `iter`/range-over-func.
+
