@@ -1,9 +1,9 @@
 package parser
 
 import (
+	"fintracker/internal/finance"
 	"strings"
 	"testing"
-	"fintracker/internal/finance"
 )
 
 func TestParseAmount(t *testing.T) {

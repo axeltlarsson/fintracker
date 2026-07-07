@@ -46,3 +46,10 @@ func (e Entry) Validate() error {
 	}
 	return nil
 }
+
+func (e Entry) DisplayPayee() string {
+	if e.Payee != "" {
+		return e.Payee
+	}
+	return e.RawPayee
+}

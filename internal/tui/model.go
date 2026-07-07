@@ -418,6 +418,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		accountsByID := make(map[int64]finance.Account, len(accounts))
+		for _, a := range accounts {
+			accountsByID[a.ID] = a
+		}
 		m.entries = entries
 		m.accountsByID = accountsByID
 		m.netWorth = netWorth(entries, accountsByID)
@@ -553,7 +556,7 @@ func buildRowsFromIdx(entries []finance.Entry, accts map[int64]finance.Account, 
 		v := projectEntry(e, accts)
 		rows = append(rows, []string{
 			e.Date.Format("2006-01-02"),
-			e.Payee,
+			e.DisplayPayee(),
 			v.Amount.String(),
 			v.Account,
 			v.Category,

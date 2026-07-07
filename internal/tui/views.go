@@ -48,7 +48,7 @@ func (m Model) View() tea.View {
 			content = m.styles.warning.Render("cursor out of bounds")
 			break
 		}
-		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", e.Payee))
+		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", e.DisplayPayee()))
 		prompt := m.styles.prompt.Render("Category: ")
 		input := m.catInput.View()
 
@@ -81,7 +81,7 @@ func (m Model) renderDetail() string {
 
 	b.WriteString("\n")
 	row("Date", e.Date.Format("2006-01-02 (Monday)"))
-	row("Payee", e.Payee)
+	row("Payee", e.DisplayPayee())
 	row("Amount", m.styles.amountStyle(v.Amount).Render(v.Amount.String()))
 	row("Account", v.Account)
 
@@ -95,13 +95,13 @@ func (m Model) renderDetail() string {
 	b.WriteString("\n")
 
 	// Show other transactions from the same payee
-	b.WriteString(m.styles.sectionTitle.MarginTop(1).Render("Other transactions from " + e.Payee))
+	b.WriteString(m.styles.sectionTitle.MarginTop(1).Render("Other transactions from " + e.DisplayPayee()))
 	b.WriteString("\n\n")
 
 	count := 0
 	for i := range m.entries {
 		other := m.entries[i]
-		if other.Payee == e.Payee && !other.Date.Equal(e.Date) {
+		if other.DisplayPayee() == e.DisplayPayee() && !other.Date.Equal(e.Date) {
 			ov := projectEntry(other, m.accountsByID)
 			fmt.Fprintf(&b, " %s %s\n",
 				other.Date.Format("2006-01-02"),

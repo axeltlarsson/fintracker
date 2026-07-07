@@ -14,7 +14,7 @@ type entryView struct {
 // from the asset/liability side. accts resolved posting AccountIDs to paths
 func projectEntry(e finance.Entry, accts map[int64]finance.Account) entryView {
 	// get the asset or liability posting w/o relying on order of postings
-	assPosting := e.Postings[0] // default if no asset/liability posting found
+	assPosting := e.Postings[0]   // default if no asset/liability posting found
 	otherPosting := e.Postings[1] // a valid Entry always has >= postings
 	for _, posting := range e.Postings {
 		a := accts[posting.AccountID].Type

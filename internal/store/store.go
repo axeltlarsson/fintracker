@@ -2,9 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
-	"errors"
 
 	"fintracker/internal/finance"
 	_ "modernc.org/sqlite"
@@ -39,7 +39,6 @@ func NewStore(path string) (*Store, error) {
 
 	return &Store{db: db}, nil
 }
-
 
 // UpsertTransactions upserts transactions into the Store
 // The number of upserted rows is returned, 0 in case of error
@@ -524,7 +523,7 @@ func (s *Store) LoadPayeeRules() ([]finance.PayeeRule, error) {
 
 func (s *Store) SeedPayeeRules(defaults []finance.PayeeRule) (int, error) {
 	var count int
-	err := s.db.QueryRow("selec count(*) from payee_rules").Scan(&count)
+	err := s.db.QueryRow("select count(*) from payee_rules").Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("counting payee rules: %w", err)
 	}

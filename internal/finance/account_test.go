@@ -75,7 +75,7 @@ func TestAccountTypeFromPath(t *testing.T) {
 		{"Expenses:Food:Groceries", finance.Expenses, false},
 		{"Equity", finance.Equity, false},
 		{"Bnak:SEB", "", true},        // typo
-		{"", "", true},               // empty path
+		{"", "", true},                // empty path
 		{"assets:Bank:SEB", "", true}, // case sensitive
 	}
 

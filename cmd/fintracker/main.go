@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"fintracker/internal/finance"
+	"fintracker/internal/importer"
 	"fintracker/internal/store"
 	"fintracker/internal/tui"
 )
@@ -23,6 +24,17 @@ func main() {
 		os.Exit(1)
 	}
 	defer s.Close()
+
+	// Seed default payee rules on first run (idempotent)
+	defaults, err := importer.DefaultRules()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := s.SeedPayeeRules(defaults); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 
 	args := flag.Args()
 
