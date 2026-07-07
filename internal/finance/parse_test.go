@@ -1,8 +1,6 @@
-package parser
+package finance
 
 import (
-	"fintracker/internal/finance"
-	"strings"
 	"testing"
 )
 
@@ -10,7 +8,7 @@ func TestParseAmount(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    finance.Öre
+		want    Öre
 		wantErr bool
 	}{
 		{name: "simple positive", input: "100,00", want: 100_00},
@@ -52,31 +50,6 @@ func TestParseAmount(t *testing.T) {
 	}
 }
 
-func TestParseTransaction(t *testing.T) {
-	input := "2006-01-15;-49,50;ICA Nära\n2026-01-16;1000,00;Lön\n"
-
-	txns, err := ParseTransactions(strings.NewReader(input), "SEB")
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(txns) != 2 {
-		t.Fatalf("got %d transactions, want 2", len(txns))
-	}
-
-	// spot-check first transaction
-	if txns[0].Amount != -49_50 {
-		t.Errorf("txns[0].Amount = %d, want %d", txns[0].Amount, finance.Öre(-49_50))
-	}
-	if txns[0].Payee != "ICA Nära" {
-		t.Errorf("txns[0].Payee = %q, want %q", txns[0].Payee, "ICA Nära")
-	}
-	if txns[0].Account != "SEB" {
-		t.Errorf("txns[0].Account = %q, want %q", txns[0].Account, "SEB")
-	}
-
-}
-
 func FuzzParseAmount(f *testing.F) {
 	// seed corpus - give the fuzzer real-world examples to mutate from
 	f.Add("100,00")
@@ -103,32 +76,4 @@ func FuzzParseAmount(f *testing.F) {
 
 	})
 
-}
-
-func FuzzParseTransactions(f *testing.F) {
-	// seed with realistc CSV lines
-
-	f.Add("2026-01-15;-49,50;ICA Nära\n")
-	f.Add("2026-01-15;-49,50;ICA Nära\n2026-01-16;1000,00;Lön\n")
-	f.Add("")
-	f.Add(";;;;\n")
-	f.Add("not-a-date;not-an-amount;payee\n")
-	f.Add("2026-01-15;0;;\n")
-
-	f.Fuzz(func(t *testing.T, input string) {
-		txns, err := ParseTransactions(strings.NewReader(input), "test")
-		if err != nil {
-			return
-		}
-
-		// Propery: every parsed transaction should have non-zero date and account
-		for i, tx := range txns {
-			if tx.Date.IsZero() {
-				t.Errorf("txns[%d] has zero date from input %q", i, input)
-			}
-			if tx.Account != "test" {
-				t.Errorf("txns[%d].Account = %q, want %q", i, tx.Account, "test")
-			}
-		}
-	})
 }

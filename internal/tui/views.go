@@ -34,29 +34,13 @@ func (m Model) View() tea.View {
 	case detailScreen:
 		header := m.styles.title.Render("fintracker — detail")
 		body := m.viewport.View()
-		footer := m.styles.help.Render("c categorise • ↑/↓ scroll • esc back")
+		footer := m.styles.help.Render("↑/↓ scroll • esc back")
 		content = header + "\n" + body + "\n" + footer
 	case summaryScreen:
 		header := m.styles.title.Render("fintracker — summary")
 		body := m.viewport.View()
 		footer := m.styles.help.Render("↑/↓ scroll • esc back")
 		content = header + "\n" + body + "\n" + footer
-
-	case categoryScreen:
-		e := m.selectedEntry()
-		if e == nil {
-			content = m.styles.warning.Render("cursor out of bounds")
-			break
-		}
-		header := m.styles.title.Render(fmt.Sprintf("Categorize: %s", e.DisplayPayee()))
-		prompt := m.styles.prompt.Render("Category: ")
-		input := m.catInput.View()
-
-		hint := m.styles.help.Render(m.help.View(m.catKeys))
-		existing := m.styles.muted.PaddingLeft(2).MarginTop(1).
-			Render("Existing: " + strings.Join(m.categories, ", "))
-
-		content = header + "\n" + prompt + input + "\n" + existing + "\n\n" + hint
 
 	}
 

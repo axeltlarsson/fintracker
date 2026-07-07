@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -26,7 +25,6 @@ const (
 	listScreen screen = iota
 	detailScreen
 	summaryScreen
-	categoryScreen
 	categorySummaryScreen // TODO might not need it as is right now
 )
 
@@ -43,8 +41,6 @@ type Model struct {
 	netWorth        finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
-	rules           []finance.Rule // TODO: retired in import-wirign step
-	categories      []string       // TODO: revisited when categorisation moves to phase 15
 	store           *store.Store
 
 	// Import state
@@ -55,10 +51,8 @@ type Model struct {
 	// UI components - each is a Bubble with its own state
 	table    TxnTable
 	viewport viewport.Model
-	catInput textinput.Model
 	help     help.Model
-	keys     keyMap         // list/global keymap
-	catKeys  categoryKeyMap // category screen keybindings
+	keys     keyMap // list/global keymap
 
 	// UI state
 	screen        screen
@@ -76,7 +70,7 @@ type Model struct {
 	styles styles
 }
 
-func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []ImportSpec) (Model, error) {
+func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error) {
 	entries, err := store.LoadEntries()
 
 	if err != nil {
@@ -112,19 +106,12 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		WithTxnBorderStyle(st.tableBorder),
 	)
 
-	// Category text input
-	ti := textinput.New()
-	ti.Placeholder = "New category..."
-	ti.CharLimit = 50
-	ti.ShowSuggestions = true
-
 	// Search input
 	si := textinput.New()
 	si.Placeholder = "search..."
 	si.CharLimit = 100
 
 	keys := newKeyMap()
-	catKeys := newCategoryKeyMap()
 
 	help := help.New()
 	help.Styles = newHelpStyles(theme)
@@ -136,19 +123,15 @@ func InitialModelFromStore(store *store.Store, rules []finance.Rule, specs []Imp
 		netWorth:        netWorth(entries, accountsByID),
 		accountSummary:  buildAccountSummary(entries, accountsByID),
 		categorySummary: buildCategorySummary(entries, accountsByID),
-		rules:           rules,
-		categories:      nil, // todo in phase 15
 		store:           store,
 
 		// Import state
 		importSpecs: specs,
 
 		// UI components
-		table:    t,
-		catInput: ti,
-		help:     help,
-		keys:     keys,
-		catKeys:  catKeys,
+		table: t,
+		help:  help,
+		keys:  keys,
 
 		// UI state
 		accounts:    collectAccounts(entries, accountsByID),
@@ -166,28 +149,6 @@ func initialVisibleIdx(n int) []int {
 		idx[i] = i
 	}
 	return idx
-}
-
-func collectCategories(txns []finance.Transaction, rules []finance.Rule) []string {
-
-	seen := make(map[string]bool)
-
-	for _, r := range rules {
-		seen[r.Category] = true
-	}
-
-	for _, t := range txns {
-		if t.Category != "" {
-			seen[t.Category] = true
-		}
-	}
-
-	cats := make([]string, 0, len(seen))
-	for c := range seen {
-		cats = append(cats, c)
-	}
-	sort.Strings(cats)
-	return cats
 }
 
 func collectAccounts(entries []finance.Entry, accts map[int64]finance.Account) []string {
@@ -388,7 +349,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.table.SetWidth(msg.Width)
 		m.table.SetHeight(tableRows)
-		m.catInput.SetWidth(msg.Width - 4)
 		m.searchInput.SetWidth(msg.Width / 3) // reasonable width for status line context
 		m.viewport.SetWidth(msg.Width - 4)
 		m.viewport.SetHeight(msg.Height - 2) // detail/summary screens: minimal chrome
@@ -452,9 +412,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDetail(msg)
 	case summaryScreen:
 		return m.updateSummary(msg)
-	case categoryScreen:
-		return m.updateCategory(msg)
-
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -489,13 +446,6 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searching = true
 			m.searchInput.SetValue("")
 			cmd := m.searchInput.Focus()
-			return m, cmd
-
-		case key.Matches(msg, m.keys.Category):
-			m.screen = categoryScreen
-			m.catInput.SetValue("")
-			m.catInput.SetSuggestions(m.categories)
-			cmd := m.catInput.Focus()
 			return m, cmd
 
 		case key.Matches(msg, m.keys.Help):
@@ -612,61 +562,12 @@ func (m Model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Back):
 			m.screen = listScreen
 			return m, nil
-		case key.Matches(msg, m.keys.Category):
-			m.screen = categoryScreen
-			m.catInput.SetValue("")
-			m.catInput.SetSuggestions(m.categories)
-			cmd := m.catInput.Focus()
-			return m, cmd
 		}
 	}
 
 	// forward to viewport for scrolling
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
-	return m, cmd
-}
-
-func (m Model) updateCategory(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-
-	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(msg, m.catKeys.Back):
-			m.catInput.Blur()
-			m.screen = detailScreen
-			return m, nil
-
-		case key.Matches(msg, m.catKeys.Confirm):
-			value := strings.TrimSpace(m.catInput.Value())
-			if value == "" {
-				return m, nil
-			}
-
-			// apply category TODO?
-
-			// update derived state
-			m.accountSummary = buildAccountSummary(m.entries, m.accountsByID)
-			m.categorySummary = buildCategorySummary(m.entries, m.accountsByID)
-			if !contains(m.categories, value) {
-				m.categories = append(m.categories, value)
-				sort.Strings(m.categories)
-			}
-
-			m.refreshTable()
-
-			m.catInput.SetSuggestions(m.categories)
-			m.catInput.Blur()
-			m.screen = detailScreen
-			m.viewport.SetContent(m.renderDetail())
-			return m, nil
-		}
-
-	}
-	// forward to text input
-	var cmd tea.Cmd
-	m.catInput, cmd = m.catInput.Update(msg)
-
 	return m, cmd
 }
 

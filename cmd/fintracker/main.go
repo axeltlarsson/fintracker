@@ -7,14 +7,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"fintracker/internal/finance"
 	"fintracker/internal/importer"
 	"fintracker/internal/store"
 	"fintracker/internal/tui"
 )
 
 func main() {
-	rulesPath := flag.String("rules", "", "path to categorization rules YAML")
 	dbPath := flag.String("db", "fintracker.db", "path to database")
 	flag.Parse()
 
@@ -49,16 +47,7 @@ func main() {
 		}
 
 	}
-	var rules []finance.Rule
-	if *rulesPath != "" {
-		rules, err = finance.LoadRules(*rulesPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	m, err := tui.InitialModelFromStore(s, rules, specs)
+	m, err := tui.InitialModelFromStore(s, specs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

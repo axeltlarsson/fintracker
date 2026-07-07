@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"fintracker/internal/parser"
+	"fintracker/internal/finance"
 )
 
 type SEBFormat struct {
@@ -47,7 +47,7 @@ func parseRow(fields []string) (RawRow, error) {
 		return RawRow{}, fmt.Errorf("bad date %q: %w", fields[0], err)
 	}
 
-	amount, err := parser.ParseAmount(fields[1])
+	amount, err := finance.ParseAmount(fields[1])
 	if err != nil {
 		return RawRow{}, fmt.Errorf("bad amount %q: %w", fields[1], err)
 	}

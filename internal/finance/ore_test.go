@@ -24,17 +24,3 @@ func TestÖreString(t *testing.T) {
 		})
 	}
 }
-
-func TestCalculateBalance(t *testing.T) {
-	txns := []Transaction{
-		{Amount: 1000_00},
-		{Amount: -250_50},
-		{Amount: -100_00},
-	}
-	got := CalculateBalance(txns)
-	want := Öre(649_50)
-
-	if got != want {
-		t.Errorf("CalculateBalance() = %v, want %v", got, want)
-	}
-}
