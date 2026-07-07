@@ -16,7 +16,7 @@ type ImportFileProgress struct {
 	Count   int // transactions parsed from this file
 }
 
-// parses and transforms each CSV into ledger entries in parallel
+// parses and transforms each CSV into ledger transactions in parallel
 func importAllFiles(
 	ctx context.Context,
 	specs []ImportSpec,
@@ -24,9 +24,9 @@ func importAllFiles(
 	placeholderID int64,
 	rules []finance.PayeeRule,
 	progress chan<- ImportFileProgress,
-) ([]finance.Entry, error) {
+) ([]finance.Transaction, error) {
 	g, ctx := errgroup.WithContext(ctx)
-	results := make([][]finance.Entry, len(specs))
+	results := make([][]finance.Transaction, len(specs))
 
 	for i, spec := range specs {
 		g.Go(func() error {
@@ -40,12 +40,12 @@ func importAllFiles(
 			if err != nil {
 				return fmt.Errorf("importing %s: %w", spec.Path, err)
 			}
-			entries := res.Entries
-			entries = append(entries, importer.PlaceholderEntries(res.Unmatched, sourceIDs[i], placeholderID)...)
-			results[i] = entries
+			txns := res.Transactions
+			txns = append(txns, importer.PlaceholderTransactions(res.Unmatched, sourceIDs[i], placeholderID)...)
+			results[i] = txns
 
 			select {
-			case progress <- ImportFileProgress{Account: spec.Account, Count: len(entries)}:
+			case progress <- ImportFileProgress{Account: spec.Account, Count: len(txns)}:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -58,7 +58,7 @@ func importAllFiles(
 		return nil, err
 	}
 
-	var all []finance.Entry
+	var all []finance.Transaction
 	for _, e := range results {
 		all = append(all, e...)
 	}

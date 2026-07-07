@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// TODO will become Transaction
-type Entry struct {
+type Transaction struct {
 	ID         int64
 	Date       time.Time
 	Payee      string
@@ -15,18 +14,18 @@ type Entry struct {
 	Cleared    bool
 	Postings   []Posting
 	Tags       []string
-	ImportHash string // content hash for import deduplication; "" = manual entry, stored as NULL
+	ImportHash string // content hash for import deduplication; "" = manual trasaction, stored as NULL
 }
 
 type Posting struct {
 	ID        int64
-	EntryID   int64
+	TransactionID   int64
 	AccountID int64
 	Amount    Öre
 	Currency  string // TODO: should be a stricter type imo
 }
 
-func (e Entry) Validate() error {
+func (e Transaction) Validate() error {
 	// Two invariants:
 	// 1. At least two postings in a transaction
 	// 2. Sum of amounts per currency must equal zero
@@ -47,7 +46,7 @@ func (e Entry) Validate() error {
 	return nil
 }
 
-func (e Entry) DisplayPayee() string {
+func (e Transaction) DisplayPayee() string {
 	if e.Payee != "" {
 		return e.Payee
 	}

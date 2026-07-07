@@ -145,7 +145,7 @@ func newHelpStyles(t Theme) help.Styles {
 	}
 }
 
-func (s styles) entryStyleFuncFromIdx(entries []finance.Entry, accts map[int64]finance.Account, idx []int) TxnStyleFunc {
+func (s styles) transactionStyleFuncFromIdx(transactions []finance.Transaction, accts map[int64]finance.Account, idx []int) TxnStyleFunc {
 	return func(row, col int, selected bool) lipgloss.Style {
 		base := s.tableCell
 
@@ -157,8 +157,8 @@ func (s styles) entryStyleFuncFromIdx(entries []finance.Entry, accts map[int64]f
 			return base
 		}
 
-		e := entries[idx[row]]
-		v := projectEntry(e, accts)
+		e := transactions[idx[row]]
+		v := projectTransaction(e, accts)
 
 		switch col {
 		case colAmount: // Amount

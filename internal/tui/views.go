@@ -50,11 +50,11 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) renderDetail() string {
-	e := m.selectedEntry()
+	e := m.selectedTransaction()
 	if e == nil {
 		return m.styles.warning.Render("cursor out of bounds")
 	}
-	v := projectEntry(*e, m.accountsByID)
+	v := projectTransaction(*e, m.accountsByID)
 
 	var b strings.Builder
 	row := func(label, value string) {
@@ -83,10 +83,10 @@ func (m Model) renderDetail() string {
 	b.WriteString("\n\n")
 
 	count := 0
-	for i := range m.entries {
-		other := m.entries[i]
+	for i := range m.transactions {
+		other := m.transactions[i]
 		if other.DisplayPayee() == e.DisplayPayee() && !other.Date.Equal(e.Date) {
-			ov := projectEntry(other, m.accountsByID)
+			ov := projectTransaction(other, m.accountsByID)
 			fmt.Fprintf(&b, " %s %s\n",
 				other.Date.Format("2006-01-02"),
 				m.styles.amountStyle(ov.Amount).Render(ov.Amount.String()),
@@ -217,9 +217,9 @@ func (m Model) renderStatusLine() string {
 	}
 
 	// Right: transaction count
-	total := len(m.entries)
+	total := len(m.transactions)
 	filtered := m.table.SearchedCount()
-	structFiltered := len(m.filteredEntries)
+	structFiltered := len(m.filteredTransactions)
 	var msg string
 	if filtered < structFiltered {
 		msg = fmt.Sprintf("%d of %d transactions", filtered, total)

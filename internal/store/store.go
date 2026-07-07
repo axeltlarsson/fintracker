@@ -10,8 +10,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// returned by InsertEntry when entry with same hash already exists
-var ErrDuplicateEntry = errors.New("duplicate entry")
+// returned by InsertTransaction when transaction with same hash already exists
+var ErrDuplicateTransaction = errors.New("duplicate transaction")
 
 type Store struct {
 	db *sql.DB
@@ -58,7 +58,7 @@ var migrations = []func(*sql.Tx) error{
 				opened_at text, -- why text?
 				closed_at text
 			);
-			create table entries (
+			create table transactions (
 				id integer primary key autoincrement,
 				date text not null,
 				payee text not null default '',
@@ -68,15 +68,15 @@ var migrations = []func(*sql.Tx) error{
 			);
 			create table postings (
 				id integer primary key autoincrement,
-				entry_id integer not null references entries(id) on delete cascade,
+				transaction_id integer not null references transactions(id) on delete cascade,
 				account_id integer not null references accounts(id) on delete restrict,
 				amount integer not null,
 				currency text not null default 'SEK'
 			);
-			create table entry_tags (
-				entry_id integer not null references entries(id) on delete cascade,
+			create table transaction_tags (
+				transaction_id integer not null references transactions(id) on delete cascade,
 				tag text not null,
-				primary key (entry_id, tag)
+				primary key (transaction_id, tag)
 			);
 		`)
 		return err
@@ -99,8 +99,8 @@ var migrations = []func(*sql.Tx) error{
 	// 2 → 3
 	func(tx *sql.Tx) error {
 		_, err := tx.Exec(`
-		alter table entries add column import_hash text;
-		create unique index idx_entries_import_hash on entries(import_hash);
+		alter table transactions add column import_hash text;
+		create unique index idx_transaction_import_hash on transactions(import_hash);
 		`)
 		return err
 	},
@@ -172,9 +172,9 @@ func (s *Store) LoadAccounts() ([]finance.Account, error) {
 	return accounts, nil
 }
 
-func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
+func (s *Store) InsertTransaction(e finance.Transaction) (int64, error) {
 	if err := e.Validate(); err != nil {
-		return 0, fmt.Errorf("invalid entry: %w", err)
+		return 0, fmt.Errorf("invalid transaction: %w", err)
 	}
 
 	tx, err := s.db.Begin()
@@ -183,31 +183,31 @@ func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	// 1 Insert entry itself
+	// 1 Insert transaction itself
 	result, err := tx.Exec(`
-		insert into entries (date, payee, raw_payee, memo, cleared, import_hash)
+		insert into transactions (date, payee, raw_payee, memo, cleared, import_hash)
 		values (?, ?, ?, ?, ?, ?)
 		on conflict (import_hash) do nothing
 	`, e.Date.Format("2006-01-02"), e.Payee, e.RawPayee, e.Memo, e.Cleared,
 		sql.NullString{String: e.ImportHash, Valid: e.ImportHash != ""})
 	if err != nil {
-		return 0, fmt.Errorf("inserting entry: %w", err)
+		return 0, fmt.Errorf("inserting transaction: %w", err)
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("checking rows affected: %w", err)
 	}
 	if n == 0 {
-		return 0, fmt.Errorf("entry %s/%s: %w", e.Date.Format("2006-01-02"), e.RawPayee, ErrDuplicateEntry)
+		return 0, fmt.Errorf("transaction %s/%s: %w", e.Date.Format("2006-01-02"), e.RawPayee, ErrDuplicateTransaction)
 	}
-	entryID, err := result.LastInsertId()
+	txnID, err := result.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("getting entry ID: %w", err)
+		return 0, fmt.Errorf("getting transaction ID: %w", err)
 	}
 
 	// 2 insert postings
 	postStmt, err := tx.Prepare(`
-		insert into postings (entry_id, account_id, amount, currency)
+		insert into postings (transaction_id, account_id, amount, currency)
 		values (?, ?, ?, ?)
 	`)
 	if err != nil {
@@ -216,7 +216,7 @@ func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
 	defer postStmt.Close() // must close prepared statement resource
 
 	for _, p := range e.Postings {
-		if _, err := postStmt.Exec(entryID, p.AccountID, int64(p.Amount), p.Currency); err != nil {
+		if _, err := postStmt.Exec(txnID, p.AccountID, int64(p.Amount), p.Currency); err != nil {
 			return 0, fmt.Errorf("inserting posting: %w", err)
 		}
 	}
@@ -224,72 +224,72 @@ func (s *Store) InsertEntry(e finance.Entry) (int64, error) {
 	// 3. Insert tags
 	for _, tag := range e.Tags {
 		if _, err := tx.Exec(`
-			insert into entry_tags (entry_id, tag) values (?, ?)
-	        `, entryID, tag); err != nil {
+			insert into transaction_tags (transaction_id, tag) values (?, ?)
+	        `, txnID, tag); err != nil {
 			return 0, fmt.Errorf("inserting tag %q: %w", tag, err)
 
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing entry: %w", err)
+		return 0, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	return entryID, nil
+	return txnID, nil
 
 }
 
-func (s *Store) UpdateEntry(e finance.Entry) error {
+func (s *Store) UpdateTransaction(e finance.Transaction) error {
 	_, err := s.db.Exec(`
-		UPDATE entries
+		UPDATE transactions
 		SET payee = ?, memo = ?, cleared = ?
 		WHERE id = ?
 	`, e.Payee, e.Memo, e.Cleared, e.ID)
 	if err != nil {
-		return fmt.Errorf("updating entry %d: %w", e.ID, err)
+		return fmt.Errorf("updating transaction %d: %w", e.ID, err)
 	}
 	return nil
 }
 
-func (s *Store) LoadEntries() ([]finance.Entry, error) {
-	// 1. Load all entries
+func (s *Store) LoadTransactions() ([]finance.Transaction, error) {
+	// 1. Load all transactions
 	rows, err := s.db.Query(`
 		select id, date, payee, raw_payee, memo, cleared, import_hash
-		from entries
+		from transactions
 		order by date, id
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("querying entries: %w", err)
+		return nil, fmt.Errorf("querying transactions: %w", err)
 	}
 	defer rows.Close()
 
-	entryMap := make(map[int64]*finance.Entry)
-	var entryOrder []int64 // preserve query order
+	txnMap := make(map[int64]*finance.Transaction)
+	var txnOrder []int64 // preserve query order
 
 	for rows.Next() {
-		var e finance.Entry
+		var e finance.Transaction
 		var dateStr string
 		var hash sql.NullString
 		if err := rows.Scan(&e.ID, &dateStr, &e.Payee, &e.RawPayee, &e.Memo, &e.Cleared, &hash); err != nil {
-			return nil, fmt.Errorf("scanning entry: %w", err)
+			return nil, fmt.Errorf("scanning transaction: %w", err)
 		}
 		e.ImportHash = hash.String
 		e.Date, err = time.Parse("2006-01-02", dateStr)
 		if err != nil {
 			return nil, fmt.Errorf("parsing date %q: %w", dateStr, err)
 		}
-		entryMap[e.ID] = &e
-		entryOrder = append(entryOrder, e.ID)
+		txnMap[e.ID] = &e
+		txnOrder = append(txnOrder, e.ID)
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating entries: %w", err)
+		return nil, fmt.Errorf("iterating transactions: %w", err)
 	}
 
 	// 2. Load all postings
 	pRows, err := s.db.Query(`
-		select id, entry_id, account_id, amount, currency
+		select id, transaction_id, account_id, amount, currency
 		from postings
-		order by entry_id, id
+		order by transaction_id, id
 	`)
 
 	if err != nil {
@@ -299,10 +299,10 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 
 	for pRows.Next() {
 		var p finance.Posting
-		if err := pRows.Scan(&p.ID, &p.EntryID, &p.AccountID, &p.Amount, &p.Currency); err != nil {
+		if err := pRows.Scan(&p.ID, &p.TransactionID, &p.AccountID, &p.Amount, &p.Currency); err != nil {
 			return nil, fmt.Errorf("scanning posting: %w", err)
 		}
-		if e, ok := entryMap[p.EntryID]; ok {
+		if e, ok := txnMap[p.TransactionID]; ok {
 			e.Postings = append(e.Postings, p)
 		}
 	}
@@ -312,9 +312,9 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 
 	// 3. Load all tags
 	tRows, err := s.db.Query(`
-		select entry_id, tag
-		from entry_tags
-		order by entry_id, tag
+		select transaction_id, tag
+		from transaction_tags
+		order by transaction_id, tag
 	`)
 
 	if err != nil {
@@ -323,12 +323,12 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	defer tRows.Close()
 
 	for tRows.Next() {
-		var entryID int64
+		var txnID int64
 		var tag string
-		if err = tRows.Scan(&entryID, &tag); err != nil {
+		if err = tRows.Scan(&txnID, &tag); err != nil {
 			return nil, fmt.Errorf("scanning tag: %w", err)
 		}
-		if e, ok := entryMap[entryID]; ok {
+		if e, ok := txnMap[txnID]; ok {
 			e.Tags = append(e.Tags, tag)
 		}
 	}
@@ -338,11 +338,11 @@ func (s *Store) LoadEntries() ([]finance.Entry, error) {
 	}
 
 	// 4. Assemble in order
-	entries := make([]finance.Entry, 0, len(entryOrder))
-	for _, id := range entryOrder {
-		entries = append(entries, *entryMap[id])
+	txns := make([]finance.Transaction, 0, len(txnOrder))
+	for _, id := range txnOrder {
+		txns = append(txns, *txnMap[id])
 	}
-	return entries, nil
+	return txns, nil
 
 }
 

@@ -6,7 +6,7 @@ import (
 	"fintracker/internal/finance"
 )
 
-func TestProjectEntry(t *testing.T) {
+func TestProjectTransaction(t *testing.T) {
 	accts := map[int64]finance.Account{
 		1: {ID: 1, Path: "Assets:Bank:SEB", Type: finance.Assets},
 		2: {ID: 2, Path: "Expenses:Food:Groceries", Type: finance.Expenses},
@@ -16,44 +16,44 @@ func TestProjectEntry(t *testing.T) {
 
 	tests := []struct {
 		name string
-		e    finance.Entry
-		want entryView
+		e    finance.Transaction
+		want transactionView
 	}{
 		{
 			name: "expense, asset posting first",
-			e: finance.Entry{Postings: []finance.Posting{
+			e: finance.Transaction{Postings: []finance.Posting{
 				{AccountID: 1, Amount: -490_00}, {AccountID: 2, Amount: 490_00},
 			}},
-			want: entryView{Account: "Assets:Bank:SEB", Amount: -490_00, Category: "Expenses:Food:Groceries"},
+			want: transactionView{Account: "Assets:Bank:SEB", Amount: -490_00, Category: "Expenses:Food:Groceries"},
 		},
 		{
 			name: "expense, asset posting second - order must not matter",
-			e: finance.Entry{Postings: []finance.Posting{
+			e: finance.Transaction{Postings: []finance.Posting{
 				{AccountID: 2, Amount: 490_00}, {AccountID: 1, Amount: -490_00},
 			}},
-			want: entryView{Account: "Assets:Bank:SEB", Amount: -490_00, Category: "Expenses:Food:Groceries"},
+			want: transactionView{Account: "Assets:Bank:SEB", Amount: -490_00, Category: "Expenses:Food:Groceries"},
 		},
 		{
 			name: "tranfser between two assets",
-			e: finance.Entry{Postings: []finance.Posting{
+			e: finance.Transaction{Postings: []finance.Posting{
 				{AccountID: 1, Amount: -1000_00}, {AccountID: 3, Amount: 1000_00},
 			}},
-			want: entryView{Account: "Assets:Bank:SEB", Amount: -1000_00, Category: "Assets:Bank:Savings"},
+			want: transactionView{Account: "Assets:Bank:SEB", Amount: -1000_00, Category: "Assets:Bank:Savings"},
 		},
 		{
 			name: "split - one asset, two expenses",
-			e: finance.Entry{Postings: []finance.Posting{
+			e: finance.Transaction{Postings: []finance.Posting{
 				{AccountID: 1, Amount: -300_00}, {AccountID: 2, Amount: -3000_00}, {AccountID: 4, Amount: 100_00},
 			}},
-			want: entryView{Account: "Assets:Bank:SEB", Amount: -300_00, Category: "(split)"},
+			want: transactionView{Account: "Assets:Bank:SEB", Amount: -300_00, Category: "(split)"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := projectEntry(tt.e, accts)
+			got := projectTransaction(tt.e, accts)
 			if got != tt.want {
-				t.Errorf("projectEntry() = %+v, want %+v", got, tt.want)
+				t.Errorf("projectTransaction() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

@@ -31,10 +31,10 @@ type BankFormat interface {
 	Parse(r io.Reader) ([]RawRow, error)
 }
 
-// ImportResult splits rows into matched entries (ready to insert) and
+// ImportResult splits rows into matched transactions (ready to insert) and
 // unmatched rows (no rul fired, need manual account assignment in the TUI)
 type ImportResult struct {
-	Entries   []finance.Entry
+	Transactions   []finance.Transaction
 	Unmatched []RawRow
 }
 
@@ -58,7 +58,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 			result.Unmatched = append(result.Unmatched, row)
 			continue
 		}
-		result.Entries = append(result.Entries, finance.Entry{
+		result.Transactions = append(result.Transactions, finance.Transaction{
 			Date:     row.Date,
 			Payee:    rule.NormalizedPayee,
 			RawPayee: row.RawPayee,
@@ -114,10 +114,10 @@ func DefaultRules() ([]finance.PayeeRule, error) {
 	return rules, nil
 }
 
-func PlaceholderEntries(rows []RawRow, sourceAccountID, placeholderAccountID int64) []finance.Entry {
-	entries := make([]finance.Entry, 0, len(rows))
+func PlaceholderTransactions(rows []RawRow, sourceAccountID, placeholderAccountID int64) []finance.Transaction {
+	txns := make([]finance.Transaction, 0, len(rows))
 	for _, row := range rows {
-		entry := finance.Entry{
+		txn := finance.Transaction{
 			Date:     row.Date,
 			Payee:    "", // unmatched - review TUI to fill in
 			RawPayee: row.RawPayee,
@@ -127,10 +127,10 @@ func PlaceholderEntries(rows []RawRow, sourceAccountID, placeholderAccountID int
 			},
 			ImportHash: row.Hash,
 		}
-		entries = append(entries, entry)
+		txns = append(txns, txn)
 	}
 
-	return entries
+	return txns
 
 }
 

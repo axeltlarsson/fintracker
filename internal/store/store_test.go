@@ -54,7 +54,7 @@ func TestInsertAndLoadAccount(t *testing.T) {
 
 }
 
-func TestInsertAndLoadEntry(t *testing.T) {
+func TestInsertAndLoadTransaction(t *testing.T) {
 	s := newTestStore(t)
 
 	// Set up accounts first
@@ -71,7 +71,7 @@ func TestInsertAndLoadEntry(t *testing.T) {
 		t.Fatalf("InsertAccount Groceries: %v", err)
 	}
 
-	entry := finance.Entry{
+	tx := finance.Transaction{
 		Date:     time.Date(2026, 4, 14, 10, 0, 10, 10, time.UTC),
 		Payee:    "Malmborgs",
 		RawPayee: "Ica Malmborgs Eriklust",
@@ -83,24 +83,24 @@ func TestInsertAndLoadEntry(t *testing.T) {
 		},
 	}
 
-	entryID, err := s.InsertEntry(entry)
+	txID, err := s.InsertTransaction(tx)
 	if err != nil {
-		t.Fatalf("InsertEntry: %v", err)
+		t.Fatalf("InsertTransaction: %v", err)
 	}
-	if entryID == 0 {
-		t.Fatalf("expected non-zero entry ID")
+	if txID == 0 {
+		t.Fatalf("expected non-zero transaction ID")
 	}
 
-	entries, err := s.LoadEntries()
+	txns, err := s.LoadTransactions()
 	if err != nil {
-		t.Fatalf("LoadEntries: %v", err)
+		t.Fatalf("LoadTransactions: %v", err)
 	}
 
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+	if len(txns) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(txns))
 	}
 
-	got := entries[0]
+	got := txns[0]
 	if got.Payee != "Malmborgs" {
 		t.Errorf("payee = %q, want %q", got.Payee, "Malmborgs")
 	}
@@ -114,7 +114,7 @@ func TestInsertAndLoadEntry(t *testing.T) {
 		t.Fatalf("postings count = %d, want 2", len(got.Postings))
 	}
 	if err = got.Validate(); err != nil {
-		t.Errorf("loaded entry doesn't validate: %v", err)
+		t.Errorf("loaded transaction doesn't validate: %v", err)
 	}
 }
 
@@ -132,39 +132,39 @@ func TestInsertAccountDuplicate(t *testing.T) {
 	}
 }
 
-func TestInsertEntryValidationFail(t *testing.T) {
+func TestInsertTransactionValidationFail(t *testing.T) {
 	s := newTestStore(t)
-	bad := finance.Entry{
+	bad := finance.Transaction{
 		Date: time.Now(),
 		Postings: []finance.Posting{
 			{AccountID: 1, Amount: 100_00, Currency: "SEK"},
 			// deliberately unbalanced
 		},
 	}
-	_, err := s.InsertEntry(bad)
+	_, err := s.InsertTransaction(bad)
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
 	}
 }
 
-func TestInsertEntryForeignKeyViolation(t *testing.T) {
+func TestInsertTransactionForeignKeyViolation(t *testing.T) {
 	s := newTestStore(t)
 
-	e := finance.Entry{
+	e := finance.Transaction{
 		Date: time.Now(),
 		Postings: []finance.Posting{
 			{AccountID: 123, Amount: 100_00, Currency: "SEK"},
 			{AccountID: 124, Amount: -100_00, Currency: "SEK"},
 		},
 	}
-	_, err := s.InsertEntry(e)
+	_, err := s.InsertTransaction(e)
 	if err == nil {
 		t.Fatal("expected account_id foreign key to fail, got nil")
 	}
 
 }
 
-func TestInsertEntryDuplicate(t *testing.T) {
+func TestInsertTransactionDuplicate(t *testing.T) {
 	s := newTestStore(t)
 
 	// create an account reference
@@ -175,7 +175,7 @@ func TestInsertEntryDuplicate(t *testing.T) {
 		t.Fatalf("InsertAccount: %v", err)
 	}
 
-	e := finance.Entry{
+	e := finance.Transaction{
 		Date:       time.Now(),
 		Payee:      "Ica",
 		ImportHash: "test-hash-1",
@@ -184,20 +184,20 @@ func TestInsertEntryDuplicate(t *testing.T) {
 			{AccountID: accID, Amount: -100_00, Currency: "SEK"},
 		},
 	}
-	_, err = s.InsertEntry(e)
+	_, err = s.InsertTransaction(e)
 	if err != nil {
-		t.Errorf("error inserting entry: %v", err)
+		t.Errorf("error inserting transaction: %v", err)
 	}
 
-	// insert same duplicate entry
-	_, err = s.InsertEntry(e)
-	if !errors.Is(err, ErrDuplicateEntry) {
-		t.Error("expected ErrDuplicateEntry")
+	// insert same duplicate transaction
+	_, err = s.InsertTransaction(e)
+	if !errors.Is(err, ErrDuplicateTransaction) {
+		t.Error("expected ErrDuplicateTransaction")
 	}
 
-	// entries without ImportHash don't cause ErrDuplicateEntry
+	// transactions without ImportHash don't cause ErrDuplicateTransaction
 
-	e2 := finance.Entry{
+	e2 := finance.Transaction{
 		Date:       time.Now(),
 		Payee:      "Ica",
 		ImportHash: "",
@@ -206,9 +206,9 @@ func TestInsertEntryDuplicate(t *testing.T) {
 			{AccountID: accID, Amount: -100_00, Currency: "SEK"},
 		},
 	}
-	_, err2 := s.InsertEntry(e2)
+	_, err2 := s.InsertTransaction(e2)
 	if err2 != nil {
-		t.Errorf("unexpected error for duplicate entry with nil importhash")
+		t.Errorf("unexpected error for duplicate transaction with nil importhash")
 	}
 
 }

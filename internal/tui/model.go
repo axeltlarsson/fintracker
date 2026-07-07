@@ -35,9 +35,9 @@ type ImportSpec struct {
 
 type Model struct {
 	// Data
-	entries         []finance.Entry
+	transactions         []finance.Transaction
 	accountsByID    map[int64]finance.Account
-	filteredEntries []int
+	filteredTransactions []int
 	netWorth        finance.Öre
 	accountSummary  map[string]finance.Öre
 	categorySummary map[string]finance.Öre
@@ -71,7 +71,7 @@ type Model struct {
 }
 
 func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error) {
-	entries, err := store.LoadEntries()
+	txns, err := store.LoadTransactions()
 
 	if err != nil {
 		return Model{}, err
@@ -90,8 +90,8 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 	st := newStyles(theme)
 
 	cols := buildCols()
-	visibleIdx := initialVisibleIdx(len(entries))
-	rows := buildRowsFromIdx(entries, accountsByID, visibleIdx)
+	visibleIdx := initialVisibleIdx(len(txns))
+	rows := buildRowsFromIdx(txns, accountsByID, visibleIdx)
 
 	t := NewTxnTable(
 		// Data
@@ -101,7 +101,7 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 		WithTxnFocused(true),
 		WithTxnHeight(20),
 		// Appearance - from styles, model just wires it up
-		WithTxnStyleFunc(st.entryStyleFuncFromIdx(entries, accountsByID, visibleIdx)),
+		WithTxnStyleFunc(st.transactionStyleFuncFromIdx(txns, accountsByID, visibleIdx)),
 		WithTxnHeaderStyle(st.tableHeader),
 		WithTxnBorderStyle(st.tableBorder),
 	)
@@ -118,11 +118,11 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 
 	return Model{
 		// Data
-		entries:         entries,
+		transactions:         txns,
 		accountsByID:    accountsByID,
-		netWorth:        netWorth(entries, accountsByID),
-		accountSummary:  buildAccountSummary(entries, accountsByID),
-		categorySummary: buildCategorySummary(entries, accountsByID),
+		netWorth:        netWorth(txns, accountsByID),
+		accountSummary:  buildAccountSummary(txns, accountsByID),
+		categorySummary: buildCategorySummary(txns, accountsByID),
 		store:           store,
 
 		// Import state
@@ -134,7 +134,7 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 		keys:  keys,
 
 		// UI state
-		accounts:    collectAccounts(entries, accountsByID),
+		accounts:    collectAccounts(txns, accountsByID),
 		searchInput: si,
 
 		// Theming
@@ -151,10 +151,10 @@ func initialVisibleIdx(n int) []int {
 	return idx
 }
 
-func collectAccounts(entries []finance.Entry, accts map[int64]finance.Account) []string {
+func collectAccounts(transactions []finance.Transaction, accts map[int64]finance.Account) []string {
 	seen := make(map[string]bool)
-	for _, e := range entries {
-		seen[projectEntry(e, accts).Account] = true
+	for _, e := range transactions {
+		seen[projectTransaction(e, accts).Account] = true
 	}
 	accs := make([]string, 0, len(seen))
 	for a := range seen {
@@ -166,9 +166,9 @@ func collectAccounts(entries []finance.Entry, accts map[int64]finance.Account) [
 }
 
 // sums postings on Asset and Liability accounts
-func netWorth(entries []finance.Entry, accts map[int64]finance.Account) finance.Öre {
+func netWorth(transactions []finance.Transaction, accts map[int64]finance.Account) finance.Öre {
 	var total finance.Öre
-	for _, e := range entries {
+	for _, e := range transactions {
 		for _, p := range e.Postings {
 			switch accts[p.AccountID].Type {
 			case finance.Assets, finance.Liabilities:
@@ -180,9 +180,9 @@ func netWorth(entries []finance.Entry, accts map[int64]finance.Account) finance.
 }
 
 // returns the balance of each Asset/Liability account
-func buildAccountSummary(entries []finance.Entry, accts map[int64]finance.Account) map[string]finance.Öre {
+func buildAccountSummary(transactions []finance.Transaction, accts map[int64]finance.Account) map[string]finance.Öre {
 	summary := make(map[string]finance.Öre)
-	for _, e := range entries {
+	for _, e := range transactions {
 		for _, p := range e.Postings {
 			a := accts[p.AccountID]
 			switch a.Type {
@@ -194,9 +194,9 @@ func buildAccountSummary(entries []finance.Entry, accts map[int64]finance.Accoun
 	return summary
 }
 
-func buildCategorySummary(entries []finance.Entry, accts map[int64]finance.Account) map[string]finance.Öre {
+func buildCategorySummary(transactions []finance.Transaction, accts map[int64]finance.Account) map[string]finance.Öre {
 	summary := make(map[string]finance.Öre)
-	for _, e := range entries {
+	for _, e := range transactions {
 		for _, p := range e.Postings {
 			a := accts[p.AccountID]
 			switch a.Type {
@@ -246,17 +246,17 @@ func (m Model) importAllCmd() tea.Cmd {
 		}
 
 		// 3. parse + transform in parallel (pure, no db)
-		entries, err := importAllFiles(context.Background(), specs, sourceIDs, placeholderID, rules, progress)
+		transactions, err := importAllFiles(context.Background(), specs, sourceIDs, placeholderID, rules, progress)
 		if err != nil {
 			return ImportErrMsg{Err: err}
 		}
 
-		// 4. insert entries sequentially (DB writes)
+		// 4. insert transactions sequentially (DB writes)
 		var count, skipped int
-		for _, e := range entries {
-			_, err := s.InsertEntry(e)
-			if errors.Is(err, store.ErrDuplicateEntry) {
-				// skip duplicate entries
+		for _, e := range transactions {
+			_, err := s.InsertTransaction(e)
+			if errors.Is(err, store.ErrDuplicateTransaction) {
+				// skip duplicate transactions
 				skipped++
 				continue
 			}
@@ -266,7 +266,7 @@ func (m Model) importAllCmd() tea.Cmd {
 			count++
 		}
 
-		return ImportDoneMsg{Total: len(entries), Inserted: count, Duplicates: skipped}
+		return ImportDoneMsg{Total: len(transactions), Inserted: count, Duplicates: skipped}
 	}
 
 	listenProgressCmd := listenForProgress(progress)
@@ -325,7 +325,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.theme = RoséPineDawn
 		}
 		m.styles = newStyles(m.theme)
-		m.table.SetStyleFunc(m.styles.entryStyleFuncFromIdx(m.entries, m.accountsByID, m.filteredEntries))
+		m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.accountsByID, m.filteredTransactions))
 		m.help.Styles = newHelpStyles(m.theme)
 		return m, nil
 
@@ -368,8 +368,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForProgress(msg.Progress)
 
 	case ImportDoneMsg:
-		// reload entries from store to include newly import ones
-		entries, err := m.store.LoadEntries()
+		// reload transactions from store to include newly import ones
+		transactions, err := m.store.LoadTransactions()
 		if err != nil {
 			return m, tea.Quit
 		}
@@ -381,12 +381,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, a := range accounts {
 			accountsByID[a.ID] = a
 		}
-		m.entries = entries
+		m.transactions = transactions
 		m.accountsByID = accountsByID
-		m.netWorth = netWorth(entries, accountsByID)
-		m.accountSummary = buildAccountSummary(entries, accountsByID)
-		m.categorySummary = buildCategorySummary(entries, accountsByID)
-		m.accounts = collectAccounts(entries, accountsByID)
+		m.netWorth = netWorth(transactions, accountsByID)
+		m.accountSummary = buildAccountSummary(transactions, accountsByID)
+		m.categorySummary = buildCategorySummary(transactions, accountsByID)
+		m.accounts = collectAccounts(transactions, accountsByID)
 		m.refreshTable()
 
 		m.importStatus = fmt.Sprintf("Imported %d transactions (%d new, %d duplicates)", msg.Total, msg.Inserted, msg.Duplicates)
@@ -499,11 +499,11 @@ func buildCols() []TxnColumn {
 	}
 }
 
-func buildRowsFromIdx(entries []finance.Entry, accts map[int64]finance.Account, idx []int) [][]string {
+func buildRowsFromIdx(transactions []finance.Transaction, accts map[int64]finance.Account, idx []int) [][]string {
 	rows := make([][]string, 0, len(idx))
 	for _, i := range idx {
-		e := entries[i]
-		v := projectEntry(e, accts)
+		e := transactions[i]
+		v := projectTransaction(e, accts)
 		rows = append(rows, []string{
 			e.Date.Format("2006-01-02"),
 			e.DisplayPayee(),
@@ -515,23 +515,23 @@ func buildRowsFromIdx(entries []finance.Entry, accts map[int64]finance.Account, 
 	return rows
 }
 
-// selectedEntry returns a pointer to the transactions under the cursor
-func (m *Model) selectedEntry() *finance.Entry {
-	if len(m.filteredEntries) == 0 {
+// selectedTransaction returns a pointer to the transactions under the cursor
+func (m *Model) selectedTransaction() *finance.Transaction {
+	if len(m.filteredTransactions) == 0 {
 		return nil
 	}
-	return &m.entries[m.filteredEntries[m.table.Cursor()]]
+	return &m.transactions[m.filteredTransactions[m.table.Cursor()]]
 }
 func (m *Model) refreshTable() {
-	m.filteredEntries = m.filteredEntries[:0]
-	for i, e := range m.entries {
-		if m.filterAccount != "" && projectEntry(e, m.accountsByID).Account != m.filterAccount {
+	m.filteredTransactions = m.filteredTransactions[:0]
+	for i, e := range m.transactions {
+		if m.filterAccount != "" && projectTransaction(e, m.accountsByID).Account != m.filterAccount {
 			continue
 		}
-		m.filteredEntries = append(m.filteredEntries, i)
+		m.filteredTransactions = append(m.filteredTransactions, i)
 	}
-	m.table.SetRows(buildRowsFromIdx(m.entries, m.accountsByID, m.filteredEntries))
-	m.table.SetStyleFunc(m.styles.entryStyleFuncFromIdx(m.entries, m.accountsByID, m.filteredEntries))
+	m.table.SetRows(buildRowsFromIdx(m.transactions, m.accountsByID, m.filteredTransactions))
+	m.table.SetStyleFunc(m.styles.transactionStyleFuncFromIdx(m.transactions, m.accountsByID, m.filteredTransactions))
 }
 
 func (m Model) nextAccount() string {

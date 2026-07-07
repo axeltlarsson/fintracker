@@ -27,18 +27,18 @@ func TestImport(t *testing.T) {
 		t.Fatalf("Import: %v", err)
 	}
 
-	if len(result.Entries) != 2 {
-		t.Errorf("got %d entries, want 2", len(result.Entries))
+	if len(result.Transactions) != 2 {
+		t.Errorf("got %d transactions, want 2", len(result.Transactions))
 	}
 	if len(result.Unmatched) != 2 {
-		t.Errorf("got %d unmatched entries want 2", len(result.Unmatched))
+		t.Errorf("got %d unmatched transactions want 2", len(result.Unmatched))
 	}
 
-	if result.Entries[0].Payee != "ICA" {
-		t.Errorf("Entries[0].payee got %q want %q", result.Entries[0].Payee, "ICA")
+	if result.Transactions[0].Payee != "ICA" {
+		t.Errorf("Transactions[0].payee got %q want %q", result.Transactions[0].Payee, "ICA")
 	}
 
-	ps := result.Entries[0].Postings
+	ps := result.Transactions[0].Postings
 	if ps[0].Amount != -490_00 {
 		t.Errorf("source posting got %v want %v", ps[0].Amount, finance.Öre(-490_00))
 	}
@@ -46,7 +46,7 @@ func TestImport(t *testing.T) {
 		t.Errorf("counter posting got %v want %v", ps[1].Amount, finance.Öre(490_00))
 	}
 
-	if result.Entries[0].Validate() != nil {
+	if result.Transactions[0].Validate() != nil {
 		t.Errorf("posting should Validate successfully")
 	}
 
@@ -67,37 +67,37 @@ func TestDefaultRules(t *testing.T) {
 	}
 }
 
-func TestPlaceholderEntries(t *testing.T) {
+func TestPlaceholderTransactions(t *testing.T) {
 	rows := []RawRow{
 		{Date: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC), Amount: -250_00, RawPayee: "OKÄND butik"},
 		{Date: time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC), Amount: 25_000_00, RawPayee: "Arbetsgivare"},
 	}
 
-	entries := PlaceholderEntries(rows, 1, 7)
+	txns := PlaceholderTransactions(rows, 1, 7)
 
-	if len(entries) != len(rows) {
-		t.Fatalf("got %d entries, want %d", len(entries), len(rows))
+	if len(txns) != len(rows) {
+		t.Fatalf("got %d transations, want %d", len(txns), len(rows))
 	}
 
-	for i, e := range entries {
-		if err := e.Validate(); err != nil {
-			t.Fatalf("entry %d: Validate: %v", i, err)
+	for i, tx := range txns {
+		if err := tx.Validate(); err != nil {
+			t.Fatalf("transaction %d: Validate: %v", i, err)
 		}
-		if e.Cleared {
-			t.Errorf("entry %d: should not be cleared", i)
+		if tx.Cleared {
+			t.Errorf("transaction %d: should not be cleared", i)
 		}
-		if e.Payee != "" {
-			t.Errorf("entry %d: Payee = %q, want empty", i, e.Payee)
+		if tx.Payee != "" {
+			t.Errorf("transaction %d: Payee = %q, want empty", i, tx.Payee)
 		}
-		if e.RawPayee != rows[i].RawPayee {
-			t.Errorf("entry %d: RawPayee = %q, want %q", i, e.RawPayee, rows[i].RawPayee)
+		if tx.RawPayee != rows[i].RawPayee {
+			t.Errorf("transaction %d: RawPayee = %q, want %q", i, tx.RawPayee, rows[i].RawPayee)
 		}
-		if e.Postings[0].AccountID != 1 || e.Postings[1].AccountID != 7 {
-			t.Errorf("entry %d: account IDs = %d,%d, want 1,7",
-				i, e.Postings[0].AccountID, e.Postings[1].AccountID)
+		if tx.Postings[0].AccountID != 1 || tx.Postings[1].AccountID != 7 {
+			t.Errorf("transaction %d: account IDs = %d,%d, want 1,7",
+				i, tx.Postings[0].AccountID, tx.Postings[1].AccountID)
 		}
-		if e.Postings[0].Amount != rows[i].Amount {
-			t.Errorf("entry %d: source amount = %v, want %v", i, e.Postings[0].Amount, e.Postings[i].Amount)
+		if tx.Postings[0].Amount != rows[i].Amount {
+			t.Errorf("transaction %d: source amount = %v, want %v", i, tx.Postings[0].Amount, tx.Postings[i].Amount)
 		}
 	}
 }

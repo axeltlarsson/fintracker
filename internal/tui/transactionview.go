@@ -2,20 +2,20 @@ package tui
 
 import "fintracker/internal/finance"
 
-// entryView is the flat projection of an Entry for table/detail display
+// transactionView is the flat projection of an Transaction for table/detail display
 // derived on demand from the postings - never stored
-type entryView struct {
+type transactionView struct {
 	Account  string // the asset/liability ("from") account path)
 	Amount   finance.Öre
 	Category string // contra account path; "(split)" when >2 postings
 }
 
-// projectEntry flattens an Entry into the single row the UI shows, viewed
+// projectTransaction flattens an Transaction into the single row the UI shows, viewed
 // from the asset/liability side. accts resolved posting AccountIDs to paths
-func projectEntry(e finance.Entry, accts map[int64]finance.Account) entryView {
+func projectTransaction(e finance.Transaction, accts map[int64]finance.Account) transactionView {
 	// get the asset or liability posting w/o relying on order of postings
 	assPosting := e.Postings[0]   // default if no asset/liability posting found
-	otherPosting := e.Postings[1] // a valid Entry always has >= postings
+	otherPosting := e.Postings[1] // a valid Transaction always has >= postings
 	for _, posting := range e.Postings {
 		a := accts[posting.AccountID].Type
 		if a == finance.Assets || a == finance.Liabilities {
@@ -35,7 +35,7 @@ func projectEntry(e finance.Entry, accts map[int64]finance.Account) entryView {
 		cat = accts[otherPosting.AccountID].Path
 	}
 
-	return entryView{
+	return transactionView{
 		Account:  acct.Path,
 		Amount:   assPosting.Amount,
 		Category: cat,
