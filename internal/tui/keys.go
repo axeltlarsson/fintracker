@@ -12,15 +12,16 @@ type keyMap struct {
 	Filter  key.Binding
 	Help    key.Binding
 	Search  key.Binding
+	Review  key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Enter, k.Summary, k.Search, k.Filter, k.Quit, k.Help}
+	return []key.Binding{k.Enter, k.Review, k.Summary, k.Search, k.Filter, k.Quit, k.Help}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Enter},
+		{k.Up, k.Down, k.Enter, k.Review},
 		{k.Summary, k.Filter, k.Search},
 		{k.Back, k.Help, k.Quit},
 	}
@@ -60,6 +61,10 @@ func newKeyMap() keyMap {
 		Search: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
+		),
+		Review: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "review"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -25,6 +26,7 @@ const (
 	listScreen screen = iota
 	detailScreen
 	summaryScreen
+	reviewScreen
 	categorySummaryScreen // TODO might not need it as is right now
 )
 
@@ -36,12 +38,12 @@ type ImportSpec struct {
 type Model struct {
 	// Data
 	transactions         []finance.Transaction
-	accountsByID    map[int64]finance.Account
+	accountsByID         map[int64]finance.Account
 	filteredTransactions []int
-	netWorth        finance.Öre
-	accountSummary  map[string]finance.Öre
-	categorySummary map[string]finance.Öre
-	store           *store.Store
+	netWorth             finance.Öre
+	accountSummary       map[string]finance.Öre
+	categorySummary      map[string]finance.Öre
+	store                *store.Store
 
 	// Import state
 	importSpecs  []ImportSpec
@@ -64,6 +66,8 @@ type Model struct {
 	ready         bool // true once we've received the first WindowSizeMsg
 	searching     bool // TODO: would it make sense to have a proper state enum/state machine?
 	searchInput   textinput.Model
+	reviewInput   textinput.Model
+	reviewErr     string
 
 	// Theming
 	theme  Theme
@@ -71,37 +75,17 @@ type Model struct {
 }
 
 func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error) {
-	txns, err := store.LoadTransactions()
-
-	if err != nil {
-		return Model{}, err
-	}
-
-	accounts, err := store.LoadAccounts()
-	if err != nil {
-		return Model{}, err
-	}
-	accountsByID := make(map[int64]finance.Account, len(accounts))
-	for _, a := range accounts {
-		accountsByID[a.ID] = a
-	}
-
 	theme := RoséPineMain // default to dark
 	st := newStyles(theme)
 
 	cols := buildCols()
-	visibleIdx := initialVisibleIdx(len(txns))
-	rows := buildRowsFromIdx(txns, accountsByID, visibleIdx)
-
 	t := NewTxnTable(
 		// Data
 		WithTxnColumns(cols),
-		WithTxnRows(rows),
 		// Layout
 		WithTxnFocused(true),
 		WithTxnHeight(20),
 		// Appearance - from styles, model just wires it up
-		WithTxnStyleFunc(st.transactionStyleFuncFromIdx(txns, accountsByID, visibleIdx)),
 		WithTxnHeaderStyle(st.tableHeader),
 		WithTxnBorderStyle(st.tableBorder),
 	)
@@ -111,19 +95,19 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 	si.Placeholder = "search..."
 	si.CharLimit = 100
 
+	// Review input
+	ri := textinput.New()
+	ri.Placeholder = "Account path (e.g. Expenses:Food:Groceries)..."
+	ri.ShowSuggestions = true
+
 	keys := newKeyMap()
 
 	help := help.New()
 	help.Styles = newHelpStyles(theme)
 
-	return Model{
+	m := Model{
 		// Data
-		transactions:         txns,
-		accountsByID:    accountsByID,
-		netWorth:        netWorth(txns, accountsByID),
-		accountSummary:  buildAccountSummary(txns, accountsByID),
-		categorySummary: buildCategorySummary(txns, accountsByID),
-		store:           store,
+		store: store,
 
 		// Import state
 		importSpecs: specs,
@@ -134,21 +118,17 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 		keys:  keys,
 
 		// UI state
-		accounts:    collectAccounts(txns, accountsByID),
 		searchInput: si,
+		reviewInput: ri,
 
 		// Theming
 		theme:  theme,
 		styles: st,
-	}, nil
-}
-
-func initialVisibleIdx(n int) []int {
-	idx := make([]int, n)
-	for i := range idx {
-		idx[i] = i
 	}
-	return idx
+	if err := m.reload(); err != nil {
+		return Model{}, fmt.Errorf("initial load: %w", err)
+	}
+	return m, nil
 }
 
 func collectAccounts(transactions []finance.Transaction, accts map[int64]finance.Account) []string {
@@ -162,6 +142,16 @@ func collectAccounts(transactions []finance.Transaction, accts map[int64]finance
 	}
 	sort.Strings(accs)
 	return accs
+
+}
+
+func accountPaths(accts map[int64]finance.Account) []string {
+	paths := make([]string, 0, len(accts))
+	for _, a := range accts {
+		paths = append(paths, a.Path)
+	}
+	sort.Strings(paths)
+	return paths
 
 }
 
@@ -350,6 +340,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetWidth(msg.Width)
 		m.table.SetHeight(tableRows)
 		m.searchInput.SetWidth(msg.Width / 3) // reasonable width for status line context
+		m.reviewInput.SetWidth(msg.Width / 2)
 		m.viewport.SetWidth(msg.Width - 4)
 		m.viewport.SetHeight(msg.Height - 2) // detail/summary screens: minimal chrome
 		m.help.SetWidth(msg.Width)
@@ -368,26 +359,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForProgress(msg.Progress)
 
 	case ImportDoneMsg:
-		// reload transactions from store to include newly import ones
-		transactions, err := m.store.LoadTransactions()
-		if err != nil {
+		if err := m.reload(); err != nil {
 			return m, tea.Quit
 		}
-		accounts, err := m.store.LoadAccounts()
-		if err != nil {
-			return m, tea.Quit
-		}
-		accountsByID := make(map[int64]finance.Account, len(accounts))
-		for _, a := range accounts {
-			accountsByID[a.ID] = a
-		}
-		m.transactions = transactions
-		m.accountsByID = accountsByID
-		m.netWorth = netWorth(transactions, accountsByID)
-		m.accountSummary = buildAccountSummary(transactions, accountsByID)
-		m.categorySummary = buildCategorySummary(transactions, accountsByID)
-		m.accounts = collectAccounts(transactions, accountsByID)
-		m.refreshTable()
 
 		m.importStatus = fmt.Sprintf("Imported %d transactions (%d new, %d duplicates)", msg.Total, msg.Inserted, msg.Duplicates)
 		return m, nil
@@ -397,7 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if key.Matches(msg, m.keys.Quit) && m.screen != listScreen {
+		if key.Matches(msg, m.keys.Quit) && m.screen != listScreen && m.screen != reviewScreen {
 			m.screen = listScreen
 			return m, nil
 		}
@@ -412,6 +386,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDetail(msg)
 	case summaryScreen:
 		return m.updateSummary(msg)
+	case reviewScreen:
+		return m.updateReview(msg)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -430,6 +406,20 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(m.renderDetail())
 			m.viewport.GotoTop()
 			return m, nil
+		case key.Matches(msg, m.keys.Review):
+			t := m.selectedTransaction()
+			if t == nil || t.Cleared {
+				return m, nil
+			}
+			if _, ok := contraPosting(*t, m.accountsByID); !ok {
+				return m, nil // no contra to categorize (e.g. a transfer)
+			}
+			m.screen = reviewScreen
+			m.reviewInput.SetValue("")
+			m.reviewInput.SetSuggestions(accountPaths(m.accountsByID))
+			m.reviewErr = ""
+			cmd := m.reviewInput.Focus()
+			return m, cmd
 
 		case key.Matches(msg, m.keys.Summary):
 			m.screen = summaryScreen
@@ -464,6 +454,60 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 
 }
+
+func (m Model) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.reviewInput.Blur()
+			m.screen = listScreen
+			m.reviewErr = ""
+			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			path := strings.TrimSpace(m.reviewInput.Value())
+			m.reviewErr = ""
+			if path == "" {
+				m.reviewErr = "empty path"
+				return m, nil
+			}
+			t := m.selectedTransaction()
+			if t == nil {
+				m.reviewErr = "no selected transaction"
+				return m, nil
+			}
+			contra, ok := contraPosting(*t, m.accountsByID)
+			if !ok {
+				m.reviewErr = "no contra posting"
+				return m, nil
+			}
+			accID, err := m.store.EnsureAccount(path)
+			if err != nil {
+				m.reviewErr = fmt.Sprintf("account: %v", err)
+				return m, nil
+			}
+			err = m.store.UpdatePosting(contra.ID, accID)
+			if err != nil {
+				m.reviewErr = fmt.Sprintf("posting: %v", err)
+				return m, nil
+			}
+			t.Cleared = true
+			if err := m.store.UpdateTransaction(*t); err != nil {
+				m.reviewErr = fmt.Sprintf("clear: %v", err)
+				return m, nil
+			}
+			m.reload()
+			m.reviewErr = ""
+			m.reviewInput.Blur()
+			m.screen = listScreen
+		}
+
+	}
+	var cmd tea.Cmd
+	m.reviewInput, cmd = m.reviewInput.Update(msg)
+	return m, cmd
+}
+
 func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -592,4 +636,29 @@ func (m Model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) reload() error {
+	transactions, err := m.store.LoadTransactions()
+	if err != nil {
+		return fmt.Errorf("loading transactions: %w", err)
+	}
+	accounts, err := m.store.LoadAccounts()
+	if err != nil {
+		return fmt.Errorf("loading accounts: %w", err)
+	}
+	accountsByID := make(map[int64]finance.Account, len(accounts))
+	for _, a := range accounts {
+		accountsByID[a.ID] = a
+	}
+	m.transactions = transactions
+	m.accountsByID = accountsByID
+	m.netWorth = netWorth(transactions, accountsByID)
+	m.accountSummary = buildAccountSummary(transactions, accountsByID)
+	m.categorySummary = buildCategorySummary(transactions, accountsByID)
+	m.accounts = collectAccounts(transactions, accountsByID)
+	m.refreshTable()
+
+	return nil
+
 }

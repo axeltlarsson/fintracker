@@ -42,6 +42,9 @@ func (m Model) View() tea.View {
 		footer := m.styles.help.Render("↑/↓ scroll • esc back")
 		content = header + "\n" + body + "\n" + footer
 
+	case reviewScreen:
+		content = m.renderReview()
+
 	}
 
 	v := tea.NewView(content)
@@ -73,7 +76,7 @@ func (m Model) renderDetail() string {
 		row("Category", m.styles.category.Render(v.Category))
 
 	} else {
-		row("Category", m.styles.uncategorized.Render(v.Category+" (unrewviewed)"))
+		row("Category", m.styles.uncategorized.Render(v.Category+" (unreviewed)"))
 
 	}
 	b.WriteString("\n")
@@ -105,6 +108,32 @@ func (m Model) renderDetail() string {
 		b.WriteString("\n")
 	}
 
+	return b.String()
+}
+
+func (m Model) renderReview() string {
+	t := m.selectedTransaction()
+	if t == nil {
+		return m.styles.warning.Render("cursor out of bound")
+	}
+	v := projectTransaction(*t, m.accountsByID)
+
+	var b strings.Builder
+	b.WriteString(m.styles.title.Render("Review: " + t.DisplayPayee()))
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.label.Render("Amount"))
+	b.WriteString(m.styles.amountStyle(v.Amount).Render(v.Amount.String()))
+	b.WriteString("\n")
+	b.WriteString(m.styles.label.Render("Currently"))
+	b.WriteString(m.styles.value.Render(v.Category))
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.label.Render("Contra account "))
+	b.WriteString(m.reviewInput.View())
+	b.WriteString("\n\n")
+	if m.reviewErr != "" {
+		b.WriteString(m.styles.warning.Render(m.reviewErr))
+	}
+	b.WriteString(m.styles.help.Render("tab complete • enter confirm • esc cancel"))
 	return b.String()
 }
 

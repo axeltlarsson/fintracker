@@ -426,3 +426,22 @@ func (s *Store) EnsureAccount(path string) (int64, error) {
 		return 0, fmt.Errorf("look up account %q: %w", path, err)
 	}
 }
+
+func (s *Store) UpdatePosting(postingID, accountID int64) error {
+	result, err := s.db.Exec(`
+		update postings set account_id = ? where id = ?
+		`, accountID, postingID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("updating posting %d: %w", postingID, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("updating posting %d not found", postingID)
+	}
+	return nil
+}

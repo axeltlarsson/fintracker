@@ -300,3 +300,70 @@ func TestEnsureAccount(t *testing.T) {
 	}
 
 }
+
+func TestUpdatePosting(t *testing.T) {
+	s := newTestStore(t)
+	// Set up accounts first
+	sebID, err := s.InsertAccount(finance.Account{
+		Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount SEB: %v", err)
+	}
+	contraAccID, err := s.InsertAccount(finance.Account{
+		Path: "Expenses:Food:Groceries", Type: finance.Expenses, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount Groceries: %v", err)
+	}
+
+	tx := finance.Transaction{
+		Date:     time.Date(2026, 4, 14, 10, 0, 10, 10, time.UTC),
+		Payee:    "Malmborgs",
+		RawPayee: "Ica Malmborgs Eriklust",
+		Memo:     "Veckans mat",
+		Tags:     []string{"fest", "april"},
+		Postings: []finance.Posting{
+			{AccountID: sebID, Amount: 649_50, Currency: "SEK"}, // will update and test
+			{AccountID: sebID, Amount: -649_50, Currency: "SEK"},
+		},
+	}
+
+	txID, err := s.InsertTransaction(tx)
+	if err != nil {
+		t.Fatalf("InsertTransaction: %v", err)
+	}
+	if txID == 0 {
+		t.Fatalf("expected non-zero transaction ID")
+	}
+
+	txns, err := s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("load transactions: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("expected 1 transaction got %d", len(txns))
+	}
+	contraPostID := txns[0].Postings[1].ID
+	err = s.UpdatePosting(contraPostID, contraAccID)
+	if err != nil {
+		t.Fatalf("update posting %v", err)
+	}
+	// load transactions again
+	txns, err = s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("load transactions: %v", txns)
+	}
+
+	posting := txns[0].Postings[1]
+	// verify posting was updated to correct contra account
+	if posting.AccountID != contraAccID {
+		t.Errorf("posting not updated to correct account")
+	}
+
+	err = s.UpdatePosting(999999, contraAccID)
+	if err == nil {
+		t.Fatalf("expected non-nil error for updating non-existing posting")
+	}
+
+}

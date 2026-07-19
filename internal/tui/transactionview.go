@@ -10,7 +10,7 @@ type transactionView struct {
 	Category string // contra account path; "(split)" when >2 postings
 }
 
-// projectTransaction flattens an Transaction into the single row the UI shows, viewed
+// projectTransaction flattens a Transaction into the single row the UI shows, viewed
 // from the asset/liability side. accts resolved posting AccountIDs to paths
 func projectTransaction(e finance.Transaction, accts map[int64]finance.Account) transactionView {
 	// get the asset or liability posting w/o relying on order of postings
@@ -41,4 +41,18 @@ func projectTransaction(e finance.Transaction, accts map[int64]finance.Account) 
 		Category: cat,
 	}
 
+}
+
+// Return the contra posting of transcation
+// the first posting whose resolved account Type is neither Liabilities nor Assets
+func contraPosting(t finance.Transaction, accts map[int64]finance.Account) (finance.Posting, bool) {
+	// iterate the postings, return the first one whose resolved account Type is neither
+	// Liabilities, nor Assets
+	for _, posting := range t.Postings {
+		account := accts[posting.AccountID]
+		if account.Type != finance.Assets && account.Type != finance.Liabilities {
+			return posting, true
+		}
+	}
+	return finance.Posting{}, false
 }
