@@ -12,7 +12,8 @@
       "Bash(rg *)",
       "Bash(sqlite3 /tmp/ft.db \"SELECT 'entries', COUNT\\(*\\) FROM entries UNION ALL SELECT 'postings', COUNT\\(*\\) FROM postings UNION ALL SELECT 'uncleared', COUNT\\(*\\) FROM entries WHERE cleared=0;\")",
       "Bash(sqlite3 /tmp/ft.db \".mode box\" \"SELECT id, path, type FROM accounts ORDER BY id;\")",
-      "Bash(sqlite3 /tmp/ft.db \"SELECT entry_id, SUM\\(amount\\) FROM postings GROUP BY entry_id HAVING SUM\\(amount\\) != 0;\")"
+      "Bash(sqlite3 /tmp/ft.db \"SELECT entry_id, SUM\\(amount\\) FROM postings GROUP BY entry_id HAVING SUM\\(amount\\) != 0;\")",
+      "Bash(go vet *)"
     ]
   },
   "outputStyle": "Learning"

@@ -11,37 +11,41 @@ fintracker is a Bubble Tea v2 TUI for personal finance tracking across multiple 
 ```
 fintracker/
 ├── cmd/fintracker/
-│   ├── main.go            # entry point, flag parsing, orchestration
-│   ├── args.go            # CLI argument parsing (account:path format)
-│   └── load.go            # file loading, calls parser
+│   ├── main.go            # entry point, flag parsing, orchestration, rule seeding
+│   └── args.go            # CLI argument parsing (Account:Path=file format)
 ├── internal/
-│   ├── finance/           # Transaction, Öre, Rule, Categorize
-│   │   ├── transaction.go
-│   │   ├── categorize.go
-│   │   ├── transaction_test.go
-│   │   └── categorize_test.go
-│   ├── parser/            # CSV parsing (io.Reader → []Transaction)
-│   │   ├── parse.go
-│   │   └── parse_test.go
+│   ├── finance/           # domain leaf: Transaction, Posting, Account, Öre, PayeeRule, ParseAmount
+│   │   ├── ledger.go      # Transaction (double-entry), Posting, Validate, DisplayPayee
+│   │   ├── account.go     # Account, AccountType, path helpers, AccountTypeFromPath
+│   │   ├── ore.go         # Öre monetary type + String()
+│   │   ├── parse.go       # ParseAmount (moved here from the retired parser package)
+│   │   ├── payee_rule.go  # PayeeRule
+│   │   └── *_test.go
+│   ├── importer/          # CSV → []Transaction: BankFormat strategy, Import, dedup hashing
+│   │   ├── importer.go    # Import, PlaceholderEntries, matchRule, stampHashes, DefaultRules
+│   │   ├── seb.go         # SEBFormat (BankFormat impl)
+│   │   ├── default_rules.yaml  # //go:embed default payee rules
+│   │   └── importer_test.go
 │   ├── store/             # SQLite persistence (modernc.org/sqlite)
-│   │   ├── store.go
+│   │   ├── store.go       # migrations, InsertTransaction, LoadTransactions, EnsureAccount, payee rules
 │   │   └── store_test.go
 │   └── tui/               # Bubble Tea model, views, keys, styles, custom components
-│       ├── model.go       # Bubble Tea Model, Update, Init, orchestration
-│       ├── views.go       # View rendering (detail, summary, category screens)
+│       ├── model.go       # Bubble Tea Model, Update, Init, import orchestration
+│       ├── views.go       # View rendering (detail, summary screens)
 │       ├── keys.go        # key.Binding definitions
 │       ├── styles.go      # design tokens: styles struct, StyleFunc, theme → style mapping
 │       ├── theme.go       # Rosé Pine palette (15 colors × 3 variants)
 │       ├── txntable.go    # custom interactive table (lipgloss rendering + cursor/scroll)
-│       ├── import.go      # parallel CSV import with errgroup + progress channel
-│       └── import_test.go
+│       ├── transactionview.go  # transactionView + projectTransaction (domain → view-model projection)
+│       ├── import.go      # parallel CSV parse with errgroup + progress channel (pure, no DB)
+│       └── *_test.go
 ├── testdata/
 │   └── seb.csv            # sample CSV for manual testing
 ├── go.mod
 └── flake.nix
 ```
 
-Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → finance, store` · `store → finance` · `parser → finance` · `finance → (nothing)`
+Dependency graph: `cmd/fintracker → tui, finance, importer, store` · `tui → finance, importer, store` · `importer → finance` · `store → finance` · `finance → (nothing)`. The `parser` package was retired — `ParseAmount` folded into `finance`, CSV parsing owned by `importer`'s `BankFormat` strategy.
 
 ### Tech stack
 
@@ -57,10 +61,12 @@ Dependency graph: `cmd/fintracker → tui, finance, parser, store` · `tui → f
 ### Key types
 
 - `Öre int64` — monetary amount in öre (1/100 SEK), satisfies fmt.Stringer
-- `Transaction` — Date, Amount (Öre), Payee, Account, Category; satisfies list.Item
-- `Store` — wraps *sql.DB; NewStore, Close, UpsertTransactions, LoadTransactions, UpdateCategory
-- `Rule` — PayeeContains, Category; loaded from YAML with struct tags
-- `model` — Bubble Tea model; embeds list.Model, viewport.Model, textinput.Model, help.Model
+- `Transaction` — double-entry journal entry: Date, Payee, RawPayee, Memo, Cleared, Postings, Tags, ImportHash. `Validate()` enforces ≥2 postings summing to zero per currency. `DisplayPayee()` prefers normalized Payee, falls back to RawPayee.
+- `Posting` — one leg: AccountID, Amount (Öre), Currency (+ TransactionID FK)
+- `Account` — typed hierarchical path (`Assets:Bank:SEB`); AccountType enum; `AccountTypeFromPath`
+- `PayeeRule` — Pattern, NormalizedPayee, DefaultAccountID (*int64, nullable), Priority
+- `Store` — wraps *sql.DB; NewStore, Close, InsertTransaction, LoadTransactions, UpdateTransaction, EnsureAccount, Insert/LoadAccounts, Insert/LoadPayeeRules, SeedPayeeRules
+- `Model` — Bubble Tea model; source of truth is `transactions []finance.Transaction` + `accountsByID`; `transactionView`/`projectTransaction` is the render-time projection
 
 ### Design principles
 
@@ -527,28 +533,59 @@ q            quit
 
 **Status:** all packages build; `go test ./...` green; working tree committed at `550d723` "Wire up new double-entry ledger into tui".
 
+### Session 14 — Phase 14 COMPLETE: seed rules, verify pipeline, retire flat model, rename Entry → Transaction
+**Date:** 2026-06-17 to 2026-07-07
+**Covered:** Worked the entire Phase-14-wrap handoff to completion. Phase 14 is now done.
+
+**1. `main.go` rule seeding (handoff step 1):** Added `importer.DefaultRules()` + `s.SeedPayeeRules(defaults)` after `NewStore` (idempotent — `COUNT(*)` guard). Seeding ≠ migration: migrations version *structure* (immutable), seeding inserts *data* (safe every startup). Caught a missing `os.Exit(1)` — a printed error is not a handled error; at `main()` top-level, fail loud.
+
+**2. End-to-end verification (handoff step 2) — found and fixed real bugs:**
+- **Empty `accountsByID` after import:** the `ImportDoneMsg` handler loaded accounts but never populated the map (drifted from `InitialModelFromStore`). Map zero-value trap: `accts[id]` on an absent key returns a zero `Account` silently — no panic, just blank cells. This is deferred-polish item (c) biting: duplicated reload sites diverge. Fixed with the populate loop; full `reload()` DRY still deferred.
+- **Latent `selec count(*)` SQL typo** in `SeedPayeeRules` (dead since Session 10) — surfaced the moment step 1 *called* it. Lesson: wiring up dead code exposes latent bugs; SQL-in-strings is invisible to the Go compiler.
+- **Empty payee column** turned out to be *correct* behavior (all rows unmatched → review queue → normalized `Payee` blank by design) but a real UX gap. Added `Transaction.DisplayPayee()` (value receiver): prefer curated `Payee`, fall back to `RawPayee`. Swapped 5 display sites. Subtlety: line-104 grouping comparison is *logic*, not display — using `DisplayPayee()` there also fixed the empty-payee-groups-everything bug (deferred item b). First flipped the condition wrong (`RawPayee == ""` → would show raw forever even after curation); corrected to test the preferred field.
+- Verified via `sqlite3`: 8 transactions, 16 postings, all balanced (sum=0), all `cleared=0`, unmatched parked on `Equity:Uncategorized`; re-import → "0 new, 8 duplicates" (hash dedup works).
+
+**3. Retire the flat model (handoff step 3) — compiler-driven, top-down:** Deleted consumers before definitions so `go build ./...` stayed green at each step (Go tolerates unused *exported* funcs — only unused *locals*/*imports* error). Order: tui+main → store → parser → finance. Removed: the fake `c` categorize screen entirely (Axel's call — the flat "category string" is the wrong abstraction; Phase 15 needs a hierarchical account picker), `rules`/`categories` fields, `collectCategories`, `catInput`/`catKeys`; store `Upsert/Load/UpdateCategory` methods; `finance.Transaction`(flat)/`CalculateBalance`/`categorize.go`. **Bonus:** the `parser` package collapsed to just `ParseAmount` (the `BankFormat` strategy in `importer` had replaced `ParseTransactions`) — folded `ParseAmount` into `finance` and *deleted the parser package*. Renamed `transaction.go` → `ore.go`. Since nothing is deployed, also rewrote history: deleted the old `transactions`-table migration (index-addressed slice → all versions shift down; fresh DB now ends at `user_version=3`; `rm` local dev DBs).
+- **Blind-spot theme (recurred 3×):** the compiler catches unused locals/imports but **not unused struct fields** (`catInput` survived the first pass); gopls/vet don't see inside **strings** (the `selec` typo, a stale `projectEntry()` error-message literal) or **comments**. A grep for the old name after any rename is cheap insurance.
+
+**4. Rename `Entry` → `Transaction` (handoff step 4):** gopls LSP rename on the type — rewrites the declaration, both method receivers, and all `finance.Entry` refs across 4 packages atomically, leaving substring-only identifiers alone. Axel propagated peripheral names too: store methods (reusing the freed `LoadTransactions`), `transactionView`/`projectTransaction`, `selectedTransaction`, `filteredTransactions`, and — by hand, since gopls can't see SQL — the schema (`entries`→`transactions`, `entry_tags`→`transaction_tags`, `entry_id`→`transaction_id`).
+
+**Concepts practiced:** map zero-value trap, value-receiver derived accessor, display-vs-logic distinction, `os.Exit` as top-level error handling, end-to-end verification catching what unit tests miss, compiler-driven (follow-the-compiler) refactoring, unused-import/local vs unused-field blind spots, tools-see-AST-not-strings, index-addressed migration renumbering, strategy pattern superseding a package, semantic rename via gopls.
+
+**Status:** all packages build; `go test ./...`, `go vet` green. Phase 14 pipeline verified end-to-end against `testdata/seb.csv`. Committed in three units: 🐛 seed+display fixes, 🔥 retire flat model, ♻️ rename Entry → Transaction.
+
 ---
 
-## 🔧 HANDOFF — pick up here (Phase 14 wrap → Phase 15)
+### Session 15 — Phase 15 MVP: the Review TUI (with atomic commit)
+**Date:** 2026-07-17 to 2026-07-22
+**Covered:** Built the review flow end-to-end — turning imported `cleared=false` transactions into cleared, categorized ones — then hardened the commit into a single atomic DB transaction.
 
-Everything below is NOT yet done. Ordered. The repo builds and tests pass as-is, but the import path is wired and NOT yet end-to-end-verified, and `main.go` does not seed rules yet.
+**Warm-up — `reload()` extraction (deferred item c, now safe):** `func (m *Model) reload() error` — the single store→model sync path (load transactions+accounts, build `accountsByID`, recompute netWorth/summaries/accounts, `refreshTable`). Pointer receiver (mutates Model in place; Go auto-addresses the value copy in `Update`). Wired into both `InitialModelFromStore` (constructor now assembles the UI shell only, then calls `reload()` — table built with empty rows, `refreshTable` fills them; `initialVisibleIdx` deleted) and the `ImportDoneMsg` handler (~20 lines → 3). Kills the divergence class that caused Session 14's empty-`accountsByID` bug.
 
-**1. `main.go` seeding — NOT APPLIED (do first).** After `NewStore`, add (and import `"fintracker/internal/importer"`):
-```go
-// Seed default payee rules on first run (idempotent — no-op once populated).
-defaults, err := importer.DefaultRules()
-if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); os.Exit(1) }
-if _, err := s.SeedPayeeRules(defaults); err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); os.Exit(1) }
-```
+**Store — `UpdatePosting` + the `dbtx` pattern:** `UpdatePosting(postingID, accountID)` repoints one posting (`RowsAffected()==0` → not-found guard). Then the atomicity refinement introduced `dbtx` — an interface (`Exec`/`QueryRow`) satisfied by BOTH `*sql.DB` and `*sql.Tx` via structural typing (no stdlib equivalent; you define your own). Extracted `ensureAccount`/`insertAccount`/`updatePosting` as free functions taking `dbtx`; public methods delegate with `s.db`. `ReviewTransaction(txID, postingID, path)` composes `ensureAccount(tx,…)` + `updatePosting(tx,…)` + clear inside ONE `sql.Tx` with `defer tx.Rollback()` — crash-safe: a mid-way failure rolls back even a freshly-created account. Extract-on-second-caller (updatePosting has 2 callers → helper; the one-line clear stays inline, YAGNI).
 
-**2. Verify the pipeline end-to-end.** TUI can't run headless. Either run in a real terminal:
-`go run ./cmd/fintracker -db /tmp/ft.db "Assets:Bank:SEB=testdata/seb.csv"` (note the NEW `=` separator and full account PATH, not "seb"), or write a throwaway driver in `/tmp` exercising EnsureAccount→Import→InsertEntry→LoadEntries against `testdata/seb.csv` and assert entries come back balanced. Confirm: re-running the same import reports duplicates skipped (idempotency), and unmatched rows land on `Equity:Uncategorized` as `cleared=false`.
+**TUI — the review screen:** new `reviewScreen`, entered with `c` (the freed key) on an uncleared row (guards: not cleared, has a contra posting). `reviewInput` is a `textinput` with `ShowSuggestions` (autocomplete over `accountPaths(m.accountsByID)`). `contraPosting(t, accts) (Posting, bool)` finds the non-asset/liability posting to categorize (the `accts` map IS the resolver — no store call). `updateReview` handles esc/enter; enter calls `ReviewTransaction` then `reload()`. `renderReview` shows txn + input + inline `reviewErr`.
 
-**3. Step 5 — retire the flat model.** Delete: `finance.Transaction` + `CalculateBalance` (`transaction.go` — keep `Öre`!); `categorize.go` (`Rule`/`LoadRules`/`Categorize`); store `LoadTransactions`/`UpsertTransactions`/`UpdateCategory`. KEEP the old `transactions` table migration (historical — never edit past migrations). In `tui`: remove `collectCategories`, the `rules []finance.Rule` field, the `rules` param on `InitialModelFromStore`. In `main.go`: remove the `-rules` flag + `finance.LoadRules`. Make the `c`/category screen an HONEST stub (currently it collects input and silently does nothing — line ~643 `// apply category TODO?`): either show "review comes in Phase 15" or disable the key. Real account-reassignment review = Phase 15.
+**Bugs caught (the session's recurring themes):**
+- **Grouped-param type gotcha:** `func(txID, postingID, accountPath string)` typed ALL three as string — `txID`/`postingID` must be `int64` (same "grouping applies to all" as struct fields). Also the `si`/`ri` sibling: `ri := textinput.New()` was configured but never assigned into the `Model` literal → zero-value textinput → nil cursor → panic on `Focus()`. Value semantics: the local and the struct field are two values.
+- **`defer tx.Rollback()` before the Begin error-check** → nil-`tx` Rollback panic masking the real error. Defer must come AFTER the validity check.
+- **Missing `UpdateTransaction`** in the first (pre-atomic) confirm handler → `cleared` set in memory then clobbered by `reload()`; the category flipped (persisted via `UpdatePosting`) so it *looked* done. Lesson: verify the invariant, not a proxy.
+- **`reviewErr` state-lifecycle leak:** cleared on retry+success but not on entry+cancel → stale error rendered on the next review. Ephemeral UI state needs a reset wired to EVERY transition. Same root cause as the (still-deferred) `importStatus` that never clears.
+- **Inverted test assertion** (`if err != nil` where the not-found case *wants* an error) → a correct method failed the test. When the message and the condition disagree, re-derive.
 
-**4. Step 6 — rename `Entry` → `Transaction`** via gopls rename, once the flat `Transaction` is gone and nothing collides. Revisit `entryView`/`projectEntry` naming after.
+**Concepts practiced:** pointer-receiver mutation + Go-1.22 per-iteration loop vars (`&acc` now safe), the `dbtx`/querier interface (structural typing over `*sql.DB`/`*sql.Tx`), multi-statement atomic transactions (`Begin`/`defer Rollback`/`Commit`), extract-on-second-caller, `textinput` autocomplete (`ShowSuggestions`), TUI screen state machine + ephemeral-state lifecycle, `t.Run` subtests, atomic-rollback as a test assertion, `go vet` printf verbs (`%d` vs `%q`).
 
-**5. Deferred polish (note, don't block):** (a) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong now (different account types); relabel/reposition. (b) `renderDetail` "Other transactions from <payee>" groups by payee — empty payee (unmatched entries) groups them all; guard. (c) DRY the three identical "load entries+accounts, build accountsByID, recompute derived state" sites (`InitialModelFromStore`, `ImportDoneMsg` handler, and import) into `func (m *Model) reload() error` — do this AFTER the shape stops moving, not before.
+**Status:** all packages build; `go test ./...`, `go vet` green. Review flow verified in the running TUI. Pre-existing `gofmt` drift in `ledger.go`/`ledger_test.go`/`importer.go` (untouched this session) — `gofmt -w internal/` to tidy.
 
-**Still-uncovered Go concepts (opportunistic):** `errors.As` + a custom error *struct* type (FK-violation on bad account_id is the natural trigger — `errors.Is` is done via `ErrDuplicateEntry`/`sql.ErrNoRows`); generics; benchmarking; `iter`/range-over-func.
+---
+
+## 🔧 HANDOFF — pick up here (Phase 15 continued → 16)
+
+Phase 15 MVP is DONE: `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded. `Equity:Uncategorized`'s balance is now literally the review-queue length.
+
+**Phase 15 extensions (not yet built):** (a) **memo / tags / normalized-payee** editing during review — the MVP only sets the contra account + cleared. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split. `ReviewTransaction` would need a wholesale posting-rewrite variant (delete+reinsert in one tx), distinct from the surgical `UpdatePosting`. (c) **write a `payee_rule` on review** so the next import auto-matches — closes the Phase-14 loop; the big design question is whether/when to offer it (every review? a prompt?). (d) **visible filtered pick-list** instead of inline autocomplete (the picker UI we deferred — Axel chose textinput+autocomplete for the MVP).
+
+**Deferred polish (note, don't block):** (a) **status line**: `importStatus`/`importStatus` message never clears (no reset-on-transition — same lifecycle bug as `reviewErr`, now fixed) AND it wraps on a narrow window (needs width-clamping/truncation). Axel flagged both — "fix soon." (b) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong (different account types); relabel/reposition. (c) proper **state machine** for screens/input-modes — the `search`(bool-on-listScreen) vs `review`(real-screen) split forced a `reviewScreen`-exclusion hack in the global `Quit` handler; `ctrl-c` won't hard-quit from review. (d) unify `contraPosting` with `projectTransaction`'s asset/contra detection (minor dup). (e) empty `internal/finance/testdata/` dir can be `rmdir`'d.
+
+**Still-uncovered Go concepts (opportunistic):** `errors.As` + a custom error *struct* type (FK-violation on bad account_id is the natural trigger — `errors.Is` done via `ErrDuplicateTransaction`/`sql.ErrNoRows`); generics; benchmarking; `iter`/range-over-func.
 
