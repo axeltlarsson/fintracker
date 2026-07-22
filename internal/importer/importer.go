@@ -34,8 +34,8 @@ type BankFormat interface {
 // ImportResult splits rows into matched transactions (ready to insert) and
 // unmatched rows (no rul fired, need manual account assignment in the TUI)
 type ImportResult struct {
-	Transactions   []finance.Transaction
-	Unmatched []RawRow
+	Transactions []finance.Transaction
+	Unmatched    []RawRow
 }
 
 func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finance.PayeeRule) (ImportResult, error) {

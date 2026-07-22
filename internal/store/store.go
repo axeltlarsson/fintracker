@@ -135,14 +135,7 @@ func migrate(db *sql.DB) error {
 }
 
 func (s *Store) InsertAccount(acc finance.Account) (int64, error) {
-	result, err := s.db.Exec(`
-		insert into accounts (path, type, currency, opened_at, closed_at)
-		values (?, ?, ?, ?, ?)
-	`, acc.Path, acc.Type, acc.Currency, acc.OpenedAt, acc.ClosedAt)
-	if err != nil {
-		return 0, fmt.Errorf("inserting account %q: %w", acc.Path, err)
-	}
-	return result.LastInsertId()
+	return insertAccount(s.db, acc)
 }
 
 func (s *Store) LoadAccounts() ([]finance.Account, error) {
@@ -410,25 +403,15 @@ func (s *Store) SeedPayeeRules(defaults []finance.PayeeRule) (int, error) {
 // EnsureAccount returns the ID of the account at path, creating it
 // (with type inferred from the first path segment) if it doesn't exist
 func (s *Store) EnsureAccount(path string) (int64, error) {
-	typ, err := finance.AccountTypeFromPath(path)
-	if err != nil {
-		return 0, fmt.Errorf("ensuring account %q: %w", path, err)
-	}
-
-	var id int64
-	err = s.db.QueryRow("select id from accounts where path = ?", path).Scan(&id)
-	switch {
-	case err == nil:
-		return id, nil //exists
-	case errors.Is(err, sql.ErrNoRows):
-		return s.InsertAccount(finance.Account{Path: path, Type: typ, Currency: "SEK"})
-	default:
-		return 0, fmt.Errorf("look up account %q: %w", path, err)
-	}
+	return ensureAccount(s.db, path)
 }
 
 func (s *Store) UpdatePosting(postingID, accountID int64) error {
-	result, err := s.db.Exec(`
+	return updatePosting(s.db, postingID, accountID)
+}
+
+func updatePosting(q dbtx, postingID, accountID int64) error {
+	result, err := q.Exec(`
 		update postings set account_id = ? where id = ?
 		`, accountID, postingID,
 	)
@@ -444,4 +427,74 @@ func (s *Store) UpdatePosting(postingID, accountID int64) error {
 		return fmt.Errorf("updating posting %d not found", postingID)
 	}
 	return nil
+
+}
+
+// dbtx is satisfied by both *sql.DB and *sql.TX, so helpers can run
+// standalone or inside a transaction
+type dbtx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func insertAccount(q dbtx, acc finance.Account) (int64, error) {
+	result, err := q.Exec(`
+		insert into accounts (path, type, currency, opened_at, closed_at)
+		values (?, ?, ?, ?, ?)
+	`, acc.Path, acc.Type, acc.Currency, acc.OpenedAt, acc.ClosedAt)
+	if err != nil {
+		return 0, fmt.Errorf("inserting account %q: %w", acc.Path, err)
+	}
+	return result.LastInsertId()
+}
+
+func ensureAccount(q dbtx, path string) (int64, error) {
+	typ, err := finance.AccountTypeFromPath(path)
+	if err != nil {
+		return 0, fmt.Errorf("ensuring account %q: %w", path, err)
+	}
+	var id int64
+	err = q.QueryRow("select id from accounts where path = ?", path).Scan(&id)
+	switch {
+	case err == nil:
+		return id, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return insertAccount(q, finance.Account{Path: path, Type: typ, Currency: "SEK"})
+	default:
+		return 0, fmt.Errorf("look up account %q: %w", path, err)
+	}
+}
+
+func (s *Store) ReviewTransaction(txID, postingID int64, accountPath string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	accountID, err := ensureAccount(tx, accountPath)
+	if err != nil {
+		return fmt.Errorf("ensureAccount: %w", err)
+	}
+	if err := updatePosting(tx, postingID, accountID); err != nil {
+		return err
+	}
+
+	// clear transaction
+	result, err := tx.Exec(`
+		update transactions set cleared = 1 where id = ?
+	`, txID)
+	if err != nil {
+		return fmt.Errorf("clearing transaction %d: %w", txID, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("getting rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("no transaction %d to update", txID)
+	}
+
+	return tx.Commit()
+
 }

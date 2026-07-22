@@ -18,11 +18,11 @@ type Transaction struct {
 }
 
 type Posting struct {
-	ID        int64
-	TransactionID   int64
-	AccountID int64
-	Amount    Öre
-	Currency  string // TODO: should be a stricter type imo
+	ID            int64
+	TransactionID int64
+	AccountID     int64
+	Amount        Öre
+	Currency      string // TODO: should be a stricter type imo
 }
 
 func (e Transaction) Validate() error {

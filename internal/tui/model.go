@@ -481,19 +481,8 @@ func (m Model) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.reviewErr = "no contra posting"
 				return m, nil
 			}
-			accID, err := m.store.EnsureAccount(path)
-			if err != nil {
-				m.reviewErr = fmt.Sprintf("account: %v", err)
-				return m, nil
-			}
-			err = m.store.UpdatePosting(contra.ID, accID)
-			if err != nil {
-				m.reviewErr = fmt.Sprintf("posting: %v", err)
-				return m, nil
-			}
-			t.Cleared = true
-			if err := m.store.UpdateTransaction(*t); err != nil {
-				m.reviewErr = fmt.Sprintf("clear: %v", err)
+			if err := m.store.ReviewTransaction(t.ID, contra.ID, path); err != nil {
+				m.reviewErr = fmt.Sprintf("review: %v", err)
 				return m, nil
 			}
 			m.reload()

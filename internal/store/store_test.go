@@ -367,3 +367,103 @@ func TestUpdatePosting(t *testing.T) {
 	}
 
 }
+
+func TestReviewTransaction(t *testing.T) {
+	s := newTestStore(t)
+	// insert a source acc, a transaction with two balanced postings (source + a contra on some account), cleared = false
+	sebID, err := s.InsertAccount(finance.Account{
+		Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount SEB: %v", err)
+	}
+
+	tx := finance.Transaction{
+		Date:     time.Date(2026, 4, 14, 10, 0, 10, 10, time.UTC),
+		Payee:    "Malmborgs",
+		RawPayee: "Ica Malmborgs Eriklust",
+		Memo:     "Veckans mat",
+		Tags:     []string{"fest", "april"},
+		Postings: []finance.Posting{
+			{AccountID: sebID, Amount: 649_50, Currency: "SEK"}, // will update and test
+			{AccountID: sebID, Amount: -649_50, Currency: "SEK"},
+		},
+	}
+
+	txID, err := s.InsertTransaction(tx)
+	if err != nil {
+		t.Fatalf("InsertTransaction: %v", err)
+	}
+	if txID == 0 {
+		t.Fatalf("expected non-zero transaction ID")
+	}
+
+	// LoadTransactions -> grab tx id and contra posting's ID
+	txns, err := s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("load transactions: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("expected 1 transaction got %d", len(txns))
+	}
+	contraPostingID := txns[0].Postings[1].ID
+
+	// call ReviewTransaction(txID, contraPostingID, "Expenses:Food:Groceries") - a path that doesn't yet exist
+	if err := s.ReviewTransaction(txID, contraPostingID, "Expenses:Food:Groceries"); err != nil {
+		t.Fatalf("review transaction failed: %v", err)
+	}
+	// reload and assert
+	txns, err = s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("load transactions: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("expected 1 transaction got %d", len(txns))
+	}
+	if !txns[0].Cleared {
+		t.Errorf("ReviewTransaction did not clear transaction")
+	}
+	// contraPosting's account should exist and  resolve to "Expenses:Food:Groceries"
+	accounts, err := s.LoadAccounts()
+	if err != nil {
+		t.Fatalf("could not load accounts %v", err)
+	}
+	if len(accounts) != 2 {
+		t.Errorf("have %d accounts, want 2", len(accounts))
+	}
+	contraPostingAccID := txns[0].Postings[1].AccountID
+	var contraPostingAcc *finance.Account = nil
+	for _, acc := range accounts {
+		if acc.ID == contraPostingAccID {
+			contraPostingAcc = &acc
+		}
+	}
+	if contraPostingAcc == nil {
+		t.Errorf("contra posting account could not be found")
+	}
+	if contraPostingAcc.Path != "Expenses:Food:Groceries" {
+		t.Errorf("contra posting's account resolves to %q want %q", contraPostingAcc.Path, "Expenses:Food:Groceries")
+	}
+
+	t.Run("rolls back on bad posting", func(t *testing.T) {
+		// Calling ReviewTransaction on valid transaction ID, but inexistent posting, should atomically roll back
+		err = s.ReviewTransaction(txID, 9999 /* nonexistent posting */, "Expenses:New:Rollback")
+		if err == nil {
+			t.Errorf("ReviewTransaction should return an error for nonexistent posting")
+		}
+		// check that no spurious accounts were created
+		accounts, err = s.LoadAccounts()
+		if err != nil {
+			t.Fatalf("could not load accounts %v", err)
+		}
+		if len(accounts) != 2 {
+			t.Errorf("have %d accounts, want 2", len(accounts))
+		}
+		for _, acc := range accounts {
+			if acc.Path == "Expenses:New:Rollback" {
+				t.Errorf("ReviewTransaction is not atomic, found %q in accounts", "Expenses:New:Rollback")
+			}
+		}
+	})
+
+}

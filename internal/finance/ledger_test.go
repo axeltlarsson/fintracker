@@ -14,29 +14,29 @@ func TestTransactionValidate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		transaction   finance.Transaction
-		wantErr bool
+		name        string
+		transaction finance.Transaction
+		wantErr     bool
 	}{
 		{
-			name:    "balanced two postings",
-			transaction:   finance.Transaction{Postings: []finance.Posting{sek(890_00), sek(-890_00)}},
-			wantErr: false,
+			name:        "balanced two postings",
+			transaction: finance.Transaction{Postings: []finance.Posting{sek(890_00), sek(-890_00)}},
+			wantErr:     false,
 		},
 		{
-			name:    "unbalanced",
-			transaction:   finance.Transaction{Postings: []finance.Posting{sek(890_00), sek(-800_00)}},
-			wantErr: true,
+			name:        "unbalanced",
+			transaction: finance.Transaction{Postings: []finance.Posting{sek(890_00), sek(-800_00)}},
+			wantErr:     true,
 		},
 		{
-			name:    "single posting",
-			transaction:   finance.Transaction{Postings: []finance.Posting{inr(1_890_00)}},
-			wantErr: true,
+			name:        "single posting",
+			transaction: finance.Transaction{Postings: []finance.Posting{inr(1_890_00)}},
+			wantErr:     true,
 		},
 		{
-			name:    "no postings",
-			transaction:   finance.Transaction{},
-			wantErr: true,
+			name:        "no postings",
+			transaction: finance.Transaction{},
+			wantErr:     true,
 		},
 		{
 			name: "multi-currency both balanced",
