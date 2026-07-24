@@ -32,7 +32,7 @@ type BankFormat interface {
 }
 
 // ImportResult splits rows into matched transactions (ready to insert) and
-// unmatched rows (no rul fired, need manual account assignment in the TUI)
+// unmatched rows (no rule fired, need manual account assignment in the TUI)
 type ImportResult struct {
 	Transactions []finance.Transaction
 	Unmatched    []RawRow

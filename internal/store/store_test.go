@@ -467,3 +467,46 @@ func TestReviewTransaction(t *testing.T) {
 	})
 
 }
+
+func TestEnsurePayeeRule(t *testing.T) {
+	s := newTestStore(t)
+	accId, err := s.InsertAccount(finance.Account{
+		Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK",
+	})
+
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	created, err := s.EnsurePayeeRule(finance.PayeeRule{Pattern: "ICA", DefaultAccountID: &accId})
+	if err != nil {
+		t.Errorf("EnsurePayeeRule: %v", err)
+	}
+	if !created {
+		t.Errorf("payee rule not `created`")
+	}
+
+	created, err = s.EnsurePayeeRule(finance.PayeeRule{Pattern: "ICA", DefaultAccountID: &accId})
+	if err != nil {
+		t.Errorf("EnsurePayeeRule: %v", err)
+	}
+	if created {
+		t.Errorf("payee rule `created` %t, want false", created)
+	}
+
+	rules, err := s.LoadPayeeRules()
+	if err != nil {
+		t.Fatalf("could not load payee rules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Errorf("have %d rules, want %d", len(rules), 1)
+	}
+
+	t.Run("no default account id", func(t *testing.T) {
+		created, err = s.EnsurePayeeRule(finance.PayeeRule{Pattern: "ICA"})
+		if err == nil {
+			t.Errorf("want err, got non")
+		}
+
+	})
+}

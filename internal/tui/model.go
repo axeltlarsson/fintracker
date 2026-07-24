@@ -28,7 +28,10 @@ const (
 	summaryScreen
 	reviewScreen
 	categorySummaryScreen // TODO might not need it as is right now
+	rulePromptScreen
 )
+
+const placeholderAccount = "Equity:Uncategorized"
 
 type ImportSpec struct {
 	Path    string
@@ -69,6 +72,10 @@ type Model struct {
 	reviewInput   textinput.Model
 	reviewErr     string
 
+	ruleInput          textinput.Model
+	ruleErr            string
+	pendingRuleAccount string // chosen account path
+
 	// Theming
 	theme  Theme
 	styles styles
@@ -96,9 +103,14 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 	si.CharLimit = 100
 
 	// Review input
-	ri := textinput.New()
-	ri.Placeholder = "Account path (e.g. Expenses:Food:Groceries)..."
-	ri.ShowSuggestions = true
+	reviewInput := textinput.New()
+	reviewInput.Placeholder = "Account path (e.g. Expenses:Food:Groceries)..."
+	reviewInput.ShowSuggestions = true
+
+	// Rule prompt input
+	ruleInput := textinput.New()
+	ruleInput.Placeholder = "pattern (e.g. ICA)"
+	ruleInput.CharLimit = 100
 
 	keys := newKeyMap()
 
@@ -119,7 +131,8 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 
 		// UI state
 		searchInput: si,
-		reviewInput: ri,
+		reviewInput: reviewInput,
+		ruleInput:   ruleInput,
 
 		// Theming
 		theme:  theme,
@@ -216,7 +229,7 @@ func (m Model) importAllCmd() tea.Cmd {
 	doImportCmd := func() tea.Msg {
 		defer close(progress)
 		// 1. resolve accounts (DB writes) before the parallel fan out
-		placeholderID, err := s.EnsureAccount("Equity:Uncategorized")
+		placeholderID, err := s.EnsureAccount(placeholderAccount)
 		if err != nil {
 			return ImportErrMsg{Err: fmt.Errorf("placeholder account: %w", err)}
 		}
@@ -341,6 +354,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetHeight(tableRows)
 		m.searchInput.SetWidth(msg.Width / 3) // reasonable width for status line context
 		m.reviewInput.SetWidth(msg.Width / 2)
+		m.ruleInput.SetWidth(msg.Width / 2)
 		m.viewport.SetWidth(msg.Width - 4)
 		m.viewport.SetHeight(msg.Height - 2) // detail/summary screens: minimal chrome
 		m.help.SetWidth(msg.Width)
@@ -371,7 +385,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if key.Matches(msg, m.keys.Quit) && m.screen != listScreen && m.screen != reviewScreen {
+		if key.Matches(msg, m.keys.Quit) && m.screen != listScreen && m.screen != reviewScreen && m.screen != rulePromptScreen {
 			m.screen = listScreen
 			return m, nil
 		}
@@ -388,7 +402,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSummary(msg)
 	case reviewScreen:
 		return m.updateReview(msg)
+	case rulePromptScreen:
+		return m.updateRulePrompt(msg)
 	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -481,19 +498,80 @@ func (m Model) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.reviewErr = "no contra posting"
 				return m, nil
 			}
+			payee := t.RawPayee
 			if err := m.store.ReviewTransaction(t.ID, contra.ID, path); err != nil {
 				m.reviewErr = fmt.Sprintf("review: %v", err)
 				return m, nil
 			}
+
 			m.reload()
 			m.reviewErr = ""
 			m.reviewInput.Blur()
-			m.screen = listScreen
+
+			// only offer to remember a real categorization, not the placholder nor a blank payee
+			if payee == "" || path == placeholderAccount {
+				m.screen = listScreen
+				return m, nil
+			}
+			m.pendingRuleAccount = path
+			m.ruleInput.SetValue(payee)
+			m.ruleErr = ""
+
+			m.screen = rulePromptScreen
+
+			return m, m.ruleInput.Focus()
 		}
 
 	}
 	var cmd tea.Cmd
 	m.reviewInput, cmd = m.reviewInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateRulePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.ruleInput.Blur()
+			m.screen = listScreen
+			m.ruleErr = ""
+			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			pattern := strings.TrimSpace(m.ruleInput.Value())
+			m.ruleErr = ""
+			if pattern == "" {
+				m.ruleErr = "empty pattern"
+				return m, nil
+			}
+			accountID, err := m.store.EnsureAccount(m.pendingRuleAccount)
+			if err != nil {
+				m.ruleErr = "no account found"
+				return m, nil
+			}
+			created, err := m.store.EnsurePayeeRule(finance.PayeeRule{Pattern: pattern, DefaultAccountID: &accountID})
+			if err != nil {
+				m.ruleErr = fmt.Sprintf("rule: %v", err)
+				return m, nil
+			}
+			if created {
+				m.importStatus = fmt.Sprintf("Saved rule: %q", pattern)
+			} else {
+				m.importStatus = "Rule already exists"
+			}
+
+			m.ruleErr = ""
+			m.pendingRuleAccount = ""
+			m.ruleInput.Blur()
+			m.screen = listScreen
+
+			return m, nil
+
+		}
+	}
+
+	var cmd tea.Cmd
+	m.ruleInput, cmd = m.ruleInput.Update(msg)
 	return m, cmd
 }
 

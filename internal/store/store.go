@@ -498,3 +498,29 @@ func (s *Store) ReviewTransaction(txID, postingID int64, accountPath string) err
 	return tx.Commit()
 
 }
+
+func (s *Store) EnsurePayeeRule(r finance.PayeeRule) (created bool, err error) {
+	if r.DefaultAccountID == nil {
+		return false, fmt.Errorf("rule is missing default account id")
+	}
+	// query for an existing rule with same pattern and default_account_id
+	var id int64
+	err = s.db.QueryRow(`
+		select id
+		from payee_rules
+		where pattern = ?
+		and default_account_id = ?
+	`, r.Pattern, *r.DefaultAccountID).Scan(&id)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := s.InsertPayeeRule(r); err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("look up payee_rule (%q, %d): %w", r.Pattern, *r.DefaultAccountID, err)
+	}
+
+}

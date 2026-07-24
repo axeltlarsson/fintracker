@@ -45,6 +45,9 @@ func (m Model) View() tea.View {
 	case reviewScreen:
 		content = m.renderReview()
 
+	case rulePromptScreen:
+		content = m.renderRulePrompt()
+
 	}
 
 	v := tea.NewView(content)
@@ -134,6 +137,29 @@ func (m Model) renderReview() string {
 		b.WriteString(m.styles.warning.Render(m.reviewErr))
 	}
 	b.WriteString(m.styles.help.Render("tab complete • enter confirm • esc cancel"))
+	return b.String()
+}
+
+func (m Model) renderRulePrompt() string {
+	var b strings.Builder
+
+	b.WriteString(m.styles.title.Render("Remember this payee?"))
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.value.Render("Future imports matching this pattern auto-categorise to:"))
+
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.label.Render("Account"))
+	b.WriteString(m.styles.value.Render(m.pendingRuleAccount))
+
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.label.Render("Pattern "))
+	b.WriteString(m.ruleInput.View())
+	b.WriteString("\n\n")
+	if m.ruleErr != "" {
+		b.WriteString(m.styles.warning.Render(m.ruleErr))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.styles.help.Render("enter save • esc skip"))
 	return b.String()
 }
 
