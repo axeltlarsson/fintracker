@@ -579,11 +579,40 @@ q            quit
 
 ---
 
-## 🔧 HANDOFF — pick up here (Phase 15 continued → 16)
+### Session 16 — Phase 15 ext (c): write a payee_rule on review (loop closed & verified)
+**Date:** 2026-07-24
+**Covered:** Closed the Phase-14 loop — a categorization made during review now becomes a persisted `payee_rule`, so future imports auto-match. Store method + a new editable-pattern prompt screen, debugged the state-transition bugs, verified end-to-end against a scratch DB.
 
-Phase 15 MVP is DONE: `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded. `Equity:Uncategorized`'s balance is now literally the review-queue length.
+**Store — `EnsurePayeeRule(r) (created bool, err error)`:** get-or-create keyed on `(pattern, default_account_id)`, using the `errors.Is(err, sql.ErrNoRows)` sentinel pattern (same as `EnsureAccount`). Rejects a nil `DefaultAccountID` up front. Test covers create → idempotent no-op → nil-account error. Surfaced a `%q`-on-int in the test message (`want %q` with `1` → `'\x01'`); `go vet` doesn't flag it because `%q` is *valid* for integers (rune-quoting) — tools check the type, not the intent (recurring Session-14 theme).
 
-**Phase 15 extensions (not yet built):** (a) **memo / tags / normalized-payee** editing during review — the MVP only sets the contra account + cleared. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split. `ReviewTransaction` would need a wholesale posting-rewrite variant (delete+reinsert in one tx), distinct from the surgical `UpdatePosting`. (c) **write a `payee_rule` on review** so the next import auto-matches — closes the Phase-14 loop; the big design question is whether/when to offer it (every review? a prompt?). (d) **visible filtered pick-list** instead of inline autocomplete (the picker UI we deferred — Axel chose textinput+autocomplete for the MVP).
+**TUI — the rule-prompt screen (editable pattern):** new `rulePromptScreen` + `ruleInput textinput` + `ruleErr`. After a successful `ReviewTransaction`, `updateReview` routes to the prompt (unless the account is the placeholder or the payee is blank), seeding `ruleInput` with the raw payee for the user to trim (`ICA MAXI MALMÖ` → `ICA`). `updateRulePrompt` resolves path→ID via `EnsureAccount`, calls `EnsurePayeeRule`, reports created/exists in the status line. Chose editable-pattern over y/n because SEB raw payees carry per-transaction junk — a verbatim-raw-payee pattern would almost never re-fire.
+
+**Bugs caught (all state-transition bugs — the class we predicted going in):** (1) success path set the status but never returned to `listScreen` nor reset state — the Session-15 `reviewErr` lifecycle lesson, missed on the *happy* path because it "feels done" once the save succeeds; (2) empty-pattern guard set the error but forgot to `return`, so it fell through and would have saved a `Pattern==""` catch-all (the Session-10 empty-pattern trap); (3) `created` branch inverted; (4) transition returned `m, nil` without `m.ruleInput.Focus()` — bubbles `textinput.Update` early-returns when unfocused, so the "editable" field silently dropped every keystroke (Focus is the keyboard-routing signal, not just a cursor); (5) error paths tore down `pendingRuleAccount`/blurred the input while staying on-screen, killing retry — teardown belongs on the *leaving* paths (success + skip), not error.
+
+**Growing hack noted:** the global Quit guard now excludes `reviewScreen && rulePromptScreen` by name — deferred-item-(c) state-machine smell scaling exactly as predicted; a `mode` enum would collapse it.
+
+**End-to-end verification (scratch DB, isolated binary):** imported `testdata/seb.csv` (all rows → `Equity:Uncategorized`, `cleared=0`), reviewed one ICA row → `Expenses:Food:Groceries`, trimmed pattern to `ICA`, saved. Confirmed via `sqlite3`: rule row `pattern=ICA, priority=0, account=Groceries` sits ahead of the seeded `ICA/priority=10/nil`; reviewed txn repointed + `cleared=1`, balanced. Then imported a *fresh* file (`ICA NÄRA LUND`) → rule fired automatically (counter → Groceries), `PRESSBYRÅN` → Equity (control). Loop closed.
+
+**Precedence finding:** user rules get `Priority: 0` (zero value) < seeded `10`, so `Import`'s ascending-priority sort + first-match puts them ahead — the loop closes *because* of that ordering. Fragile: `matchRule` returns the first *pattern* match, then `Import` rejects it if the account is nil — so a same-priority nil-account rule could shadow a usable one and wrongly send a row to the queue. Design smell for later.
+
+**Temporal-application realization (drove the next decision):** rules fire only at import time, so rows imported *before* a rule was written stay in the queue (and content-hash dedup blocks re-import from fixing them). Axel hit this immediately ("but the other ICA rows aren't categorized!"). Decided: **re-point on save** — saving a rule immediately re-points matching *uncleared, placeholder-parked* transactions to the rule's account (still `cleared=0` — fill blanks, never overwrite intent). Deferred to next session.
+
+**Concepts practiced:** get-or-create + `errors.Is`/`sql.ErrNoRows` sentinel, screen state-machine + ephemeral-state lifecycle (reset on every *leaving* path), `textinput` Focus as the keyboard-routing signal, `%q`-vs-`%d` and tools-see-types-not-intent, rule precedence via priority sort, content-hash dedup × re-import interaction, end-to-end DB verification catching what unit tests miss.
+
+**Status:** all packages build; `go test ./internal/tui ./internal/store` green; `go vet` clean. Loop verified end-to-end. Committed at `95dea79` "Add ruleInputPrompt screen" (incl. +4 `testdata/seb.csv` rows for richer manual testing).
+
+---
+
+## 🔧 HANDOFF — pick up here (Phase 15 ext (c) done → re-point on save → 16)
+
+**Next up — re-point on save (retroactive rule application).** Axel chose this over the alternatives: when a rule is saved during review, immediately re-point matching *uncleared, placeholder-parked* transactions to the rule's account, still `cleared=0` (fill blanks, never overwrite a deliberately-chosen account). Three steps, none started:
+1. **`finance.PayeeRule.Matches(rawPayee string) bool`** — extract the case-insensitive-Contains predicate out of `importer.matchRule` into the domain type (value receiver, like `DisplayPayee`); refactor `matchRule` to call it. **Behavior-preserving** — no empty-pattern guard (that's handled at creation); existing importer match tests must stay green.
+2. **`store.RepointPostings(postingIDs []int64, accountID int64) error`** — bulk re-point in one `sql.Tx` via the `dbtx`/`updatePosting` helper (Session 15); no clearing. + test.
+3. **Wire into `updateRulePrompt` success path** — gather uncleared transactions whose contra posting is still on `Equity:Uncategorized` (scope guard!) and whose `RawPayee` `Matches` the pattern, collect their contra posting IDs, `RepointPostings`, `reload()`, report `"categorized N in queue"`.
+
+**Phase 15 MVP recap:** `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded. `Equity:Uncategorized`'s balance is literally the review-queue length.
+
+**Phase 15 extensions:** ✅ (c) **write a `payee_rule` on review** — DONE (Session 16; re-point-on-save refinement pending, above). Not yet built: (a) **memo / tags / normalized-payee** editing during review — the MVP only sets the contra account + cleared. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split. `ReviewTransaction` would need a wholesale posting-rewrite variant (delete+reinsert in one tx), distinct from the surgical `UpdatePosting`. (d) **visible filtered pick-list** instead of inline autocomplete (Axel chose textinput+autocomplete for the MVP).
 
 **Deferred polish (note, don't block):** (a) **status line**: `importStatus`/`importStatus` message never clears (no reset-on-transition — same lifecycle bug as `reviewErr`, now fixed) AND it wraps on a narrow window (needs width-clamping/truncation). Axel flagged both — "fix soon." (b) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong (different account types); relabel/reposition. (c) proper **state machine** for screens/input-modes — the `search`(bool-on-listScreen) vs `review`(real-screen) split forced a `reviewScreen`-exclusion hack in the global `Quit` handler; `ctrl-c` won't hard-quit from review. (d) unify `contraPosting` with `projectTransaction`'s asset/contra detection (minor dup). (e) empty `internal/finance/testdata/` dir can be `rmdir`'d.
 

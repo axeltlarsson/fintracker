@@ -559,6 +559,33 @@ func (m Model) updateRulePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.importStatus = "Rule already exists"
 			}
+			// re point existing uncleared transactions with new rule
+			rule := finance.PayeeRule{Pattern: pattern}
+			contraIDs := make([]int64, 0)
+			for _, t := range m.transactions {
+				contra, ok := contraPosting(t, m.accountsByID)
+				if !ok {
+					continue // transfer / no contra log - not a candidate
+				}
+				if !t.Cleared &&
+					rule.Matches(t.RawPayee) &&
+					m.accountsByID[contra.AccountID].Path == placeholderAccount {
+					contraIDs = append(contraIDs, contra.ID)
+				}
+			}
+			if len(contraIDs) > 0 {
+				if err := m.store.RepointPostings(contraIDs, accountID); err != nil {
+					m.ruleErr = fmt.Sprintf("could not apply update rule retroactively: %v", err)
+					return m, nil
+				}
+
+				if err := m.reload(); err != nil {
+					m.ruleErr = fmt.Sprintf("reloading: %v", err)
+					return m, nil
+				}
+
+				m.importStatus = fmt.Sprintf("%s — categorized %d in queue", m.importStatus, len(contraIDs))
+			}
 
 			m.ruleErr = ""
 			m.pendingRuleAccount = ""

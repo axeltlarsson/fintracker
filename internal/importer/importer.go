@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 
 	"fintracker/internal/finance"
@@ -76,10 +75,7 @@ func Import(r io.Reader, format BankFormat, sourceAccountID int64, rules []finan
 func matchRule(payee string, rules []finance.PayeeRule) (finance.PayeeRule, bool) {
 	for _, rule := range rules {
 
-		if strings.Contains(
-			strings.ToUpper(payee),
-			strings.ToUpper(rule.Pattern),
-		) {
+		if rule.Matches(payee) {
 			return rule, true
 		}
 	}

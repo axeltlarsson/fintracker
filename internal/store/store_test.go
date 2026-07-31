@@ -368,6 +368,84 @@ func TestUpdatePosting(t *testing.T) {
 
 }
 
+func TestRepointPostings(t *testing.T) {
+	s := newTestStore(t)
+
+	// Set up accounts first
+	sebID, err := s.InsertAccount(finance.Account{
+		Path: "Assets:Bank:SEB", Type: finance.Assets, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount SEB: %v", err)
+	}
+	contraAccID, err := s.InsertAccount(finance.Account{
+		Path: "Expenses:Food:Groceries", Type: finance.Expenses, Currency: "SEK",
+	})
+	if err != nil {
+		t.Fatalf("InsertAccount Groceries: %v", err)
+	}
+
+	tx := finance.Transaction{
+		Date:     time.Date(2026, 4, 14, 10, 0, 10, 10, time.UTC),
+		Payee:    "Malmborgs",
+		RawPayee: "Ica Malmborgs Eriklust",
+		Memo:     "Veckans mat",
+		Tags:     []string{"fest", "april"},
+		Postings: []finance.Posting{
+			{AccountID: sebID, Amount: 649_50, Currency: "SEK"}, // will update and test
+			{AccountID: sebID, Amount: -649_50, Currency: "SEK"},
+		},
+	}
+
+	txID, err := s.InsertTransaction(tx)
+	if err != nil {
+		t.Fatalf("InsertTransaction: %v", err)
+	}
+	if txID == 0 {
+		t.Fatalf("expected non-zero transaction ID")
+	}
+
+	txns, err := s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("load transactions: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("expected 1 transaction got %d", len(txns))
+	}
+	contraPostID := txns[0].Postings[1].ID
+
+	// re-point the second posting to Groceries
+	if err := s.RepointPostings([]int64{contraPostID}, contraAccID); err != nil {
+		t.Fatalf("RepointPostings: %v", err)
+	}
+
+	txns, err = s.LoadTransactions()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := txns[0].Postings[1].AccountID; got != contraAccID {
+		t.Errorf("re-pointed posting account = %d, want %d (Groceries)", got, contraAccID)
+	}
+	if got := txns[0].Postings[0].AccountID; got != sebID {
+		t.Errorf("untouched posting account = %d, want %d (unchanged)", got, sebID)
+	}
+
+	// atomicity: a batch with one bad ID must roll back entirely
+	t.Run("rolls back on bad id", func(t *testing.T) {
+		if err := s.RepointPostings([]int64{contraPostID, 999999}, sebID); err == nil {
+			t.Fatal("want error for non-existent posting ID, got nil")
+		}
+		txns, err := s.LoadTransactions()
+		if err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if got := txns[0].Postings[1].AccountID; got != contraAccID {
+			t.Errorf("posting moved despite rollback: account = %d, want %d", got, contraAccID)
+		}
+	})
+
+}
+
 func TestReviewTransaction(t *testing.T) {
 	s := newTestStore(t)
 	// insert a source acc, a transaction with two balanced postings (source + a contra on some account), cleared = false

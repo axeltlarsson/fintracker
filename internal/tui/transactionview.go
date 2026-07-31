@@ -43,7 +43,7 @@ func projectTransaction(e finance.Transaction, accts map[int64]finance.Account) 
 
 }
 
-// Return the contra posting of transcation
+// Return the contra posting of transaction:
 // the first posting whose resolved account Type is neither Liabilities nor Assets
 func contraPosting(t finance.Transaction, accts map[int64]finance.Account) (finance.Posting, bool) {
 	// iterate the postings, return the first one whose resolved account Type is neither

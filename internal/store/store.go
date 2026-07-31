@@ -524,3 +524,21 @@ func (s *Store) EnsurePayeeRule(r finance.PayeeRule) (created bool, err error) {
 	}
 
 }
+
+func (s *Store) RepointPostings(postingIDs []int64, accountID int64) error {
+	tx, err := s.db.Begin()
+
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, id := range postingIDs {
+		if err := updatePosting(tx, id, accountID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+
+}
