@@ -131,6 +131,7 @@ func (m Model) renderReview() string {
 	b.WriteString(m.styles.value.Render(v.Category))
 	b.WriteString("\n\n")
 	b.WriteString(m.styles.label.Render("Contra account "))
+	m.reviewInput.SetValue("hej")
 	b.WriteString(m.reviewInput.View())
 	b.WriteString("\n\n")
 	if m.reviewErr != "" {

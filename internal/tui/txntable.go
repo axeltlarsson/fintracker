@@ -321,9 +321,13 @@ func clamp(v, low, high int) int {
 // TODO: does this location make sense?
 // Ideally want to statically tie to the Transaction I guess
 const (
-	colDate     = 0
-	colPayee    = 1
-	colAmount   = 2
-	colAccount  = 3
-	colCategory = 4
+	colStatus = 0
+	colDate   = 1
+
+	colPayee  = 2
+	colAmount = 3
+
+	colAccount = 4
+
+	colCategory = 5
 )

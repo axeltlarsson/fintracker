@@ -629,6 +629,7 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func buildCols() []TxnColumn {
 	return []TxnColumn{
+		{Title: "", Width: 1},
 		{Title: "Date", Width: 12},
 		{Title: "Payee", Width: 25},
 		{Title: "Amount", Width: 14, Align: lipgloss.Right},
@@ -642,7 +643,12 @@ func buildRowsFromIdx(transactions []finance.Transaction, accts map[int64]financ
 	for _, i := range idx {
 		e := transactions[i]
 		v := projectTransaction(e, accts)
+		marker := "!"
+		if e.Cleared {
+			marker = "*"
+		}
 		rows = append(rows, []string{
+			marker,
 			e.Date.Format("2006-01-02"),
 			e.DisplayPayee(),
 			v.Amount.String(),

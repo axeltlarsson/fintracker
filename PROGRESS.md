@@ -603,12 +603,46 @@ q            quit
 
 ---
 
-## 🔧 HANDOFF — pick up here (Phase 15 ext (c) done → re-point on save → 16)
+### Session 17 — re-point on save (retroactive rule application) + review-indicator WIP
+**Date:** 2026-07-27 to 2026-08-10
+**Covered:** Built and verified re-point-on-save (the Phase-15-ext-(c) refinement). Then started a table review-state indicator (in progress, uncommitted).
 
-**Next up — re-point on save (retroactive rule application).** Axel chose this over the alternatives: when a rule is saved during review, immediately re-point matching *uncleared, placeholder-parked* transactions to the rule's account, still `cleared=0` (fill blanks, never overwrite a deliberately-chosen account). Three steps, none started:
-1. **`finance.PayeeRule.Matches(rawPayee string) bool`** — extract the case-insensitive-Contains predicate out of `importer.matchRule` into the domain type (value receiver, like `DisplayPayee`); refactor `matchRule` to call it. **Behavior-preserving** — no empty-pattern guard (that's handled at creation); existing importer match tests must stay green.
-2. **`store.RepointPostings(postingIDs []int64, accountID int64) error`** — bulk re-point in one `sql.Tx` via the `dbtx`/`updatePosting` helper (Session 15); no clearing. + test.
-3. **Wire into `updateRulePrompt` success path** — gather uncleared transactions whose contra posting is still on `Equity:Uncategorized` (scope guard!) and whose `RawPayee` `Matches` the pattern, collect their contra posting IDs, `RepointPostings`, `reload()`, report `"categorized N in queue"`.
+**Re-point on save — 3 steps, all done & committed (`bd6c025`):**
+1. **`finance.PayeeRule.Matches(rawPayee string) bool`** — lifted the case-insensitive-`Contains` predicate out of `importer.matchRule` into the domain type (value receiver, like `DisplayPayee`); `matchRule` now delegates. Behavior-preserving extraction — the existing importer match tests going green *was* the proof nothing changed. One source of truth so importer and TUI can't diverge (matters the day patterns become regex).
+2. **`store.RepointPostings(postingIDs []int64, accountID int64) error`** — bulk re-point in one `sql.Tx`, looping the `updatePosting(dbtx, …)` helper (Session 15); no clearing. The `updatePosting` not-found guard means **one bad ID aborts the whole batch** — the atomicity we want. Test includes the rollback-as-assertion case (batch with a bad ID leaves the good row unmoved). Empty slice → deliberately a no-op (opens+commits an empty tx; not worth a guard).
+3. **Wired into `updateRulePrompt` success path** — build a match probe `finance.PayeeRule{Pattern: pattern}`, loop `m.transactions` collecting `contra.ID` where **all** of `!t.Cleared`, `rule.Matches(t.RawPayee)`, and `m.accountsByID[contra.AccountID].Path == placeholderAccount` hold; then `RepointPostings` + `reload()` + fold count into `importStatus`.
+
+**Bug caught (skip vs abort):** the sweep first wrote `if !ok { m.ruleErr = …; return }` on `contraPosting`'s second return — Axel flagged it himself with `TODO: not sure makes sense?`. A `!ok` means a **transfer** (all postings on Asset/Liability, no contra leg) — a normal non-candidate, not an error. As written, a single transfer anywhere in the ledger would abort *every* rule-save. Fix: `continue`. Lesson: `contraPosting`→false belongs in the same bucket as the `!t.Cleared`/`Matches` filters (skip this item), not with "the operation is broken" (`return`).
+
+**End-to-end verified (scratch DB):** imported `testdata/seb.csv` (4 ICA rows, all → `Equity:Uncategorized`, `cleared=0`), reviewed **one** ICA row → `Expenses:Food:Groceries`, trimmed pattern to `ICA`, saved. The **other three** March ICA rows flipped to Groceries instantly (`cleared=0`), every non-ICA row untouched on Equity. Confirmed via `sqlite3`. Status line: `Saved rule: "ICA" — categorized 3 in queue`.
+
+**Review-state indicator — IN PROGRESS, UNCOMMITTED (see handoff):** noticed cleared vs uncleared is invisible in the table. Root cause: `transactionStyleFuncFromIdx` keys its review styling on `v.Category == ""`, a **dead branch** — `projectTransaction` always sets `Category` to a contra account *path*, never `""`. Drift from the Session-13 intent (`!e.Cleared`). The `cleared` flag has zero table representation. Chosen design (via AskUserQuestion): a **status marker column** (`*` cleared / `!` review) **+ fade the whole uncleared row + a legend** in the help footer.
+
+**Dead-config discovery:** `TxnColumn.Width` is **never applied** in the render path — only `.Title` and `.Align` are read. The table auto-sizes columns to content, then `lt.Width(t.width)` stretches them to fill the terminal, so the 1-char marker column absorbs stretch slack → visible gap between glyph and date. `Align` is honored, `Width` is a lie the struct tells. Fix options (unresolved): right-align the marker (uses the honored `Align`), or prefix the glyph onto the date cell (drop the column), or make `Width` real in the StyleFunc (a layout refactor — not mid-stream).
+
+**Concepts practiced:** value-receiver domain method + behavior-preserving refactor proven by existing tests, bulk atomic transaction + rollback-as-assertion test, skip-vs-abort control flow (a filter is not an error), fill-blanks-never-overwrite scope guard, dead-configuration-field smell (`Width` vs `Align` asymmetry).
+
+**Status:** re-point committed at `bd6c025` "Automatically repoint uncleared postings with new rules"; `go test ./...` + `go vet` green there. Review-indicator WIP is **uncommitted** (`model.go`, `txntable.go`, `views.go`).
+
+---
+
+## 🔧 HANDOFF — pick up here (review-state indicator, mid-flight)
+
+**⚠️ CROSS-MACHINE / CLEANUP FIRST:** the review-indicator work is **uncommitted** — to move it to another computer, remove the debug line below, then commit (or `git stash` + push) so it travels via git. It does *not* build/run cleanly to hand over as-is.
+
+**🐛 STRAY DEBUG LINE — remove before anything:** `internal/tui/views.go`, in `renderReview`, there's a `m.reviewInput.SetValue("hej")` sitting right before `m.reviewInput.View()`. It forces the review input to render `"hej"` every frame, and it *mutates state inside a `View` function* (only the value-copy, so no persistent corruption — but View must stay pure). Delete that one line.
+
+**Where the indicator stands (uncommitted):**
+- ✅ **Step 1 (column plumbing):** `colStatus = 0` + shifted `col*` constants (`txntable.go`); marker column `{Title: "", Width: 1}` + per-row `*`/`!` glyph in `buildCols`/`buildRowsFromIdx` (`model.go`). Builds.
+- ⛔ **Layout gap UNRESOLVED:** glyph floats away from the date because `TxnColumn.Width` is dead config and the table stretches to fill. Decide the fix (right-align marker / prefix glyph onto date / make `Width` real). Simplest to try: `Align: lipgloss.Right` on the marker column.
+- ⬜ **Step 2 (styleFunc — the point of all this):** in `transactionStyleFuncFromIdx`, (a) after computing `e`, if `!e.Cleared && !selected` set `base = base.Foreground(s.theme.Muted)` to fade the row; (b) add `case colStatus:` → `*`/cleared in a calm color (Pine/Muted), `!`/uncleared in an attention color (Gold) so the marker pops even on a faded row; (c) gate the `colAmount`/`colCategory` colors on `e.Cleared` so faded rows stay muted. Replace the dead `v.Category == ""` branch with `e.Cleared`.
+- ⬜ **Step 3 (legend):** a muted `* cleared  ! review` note in the list-screen help footer (`views.go`, the `listScreen` join).
+
+**Re-point on save (done, `bd6c025`) recap:** save a rule during review → all *uncleared, placeholder-parked* transactions matching the pattern re-point to the rule's account, still `cleared=0`. `RepointPostings` is atomic; scope guard = only `Equity:Uncategorized` rows move.
+
+**Phase 15 MVP recap:** `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded.
+
+**Phase 15 extensions:** ✅ (c) **write a `payee_rule` on review** — DONE (Session 16) + re-point refinement DONE (Session 17). Not yet built: (a) **memo / tags / normalized-payee** editing during review. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split; needs a wholesale posting-rewrite variant of `ReviewTransaction` (delete+reinsert in one tx). (d) **visible filtered pick-list** instead of inline autocomplete.
 
 **Phase 15 MVP recap:** `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded. `Equity:Uncategorized`'s balance is literally the review-queue length.
 
