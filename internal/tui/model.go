@@ -455,6 +455,14 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.searchInput.Focus()
 			return m, cmd
 
+		case key.Matches(msg, m.keys.Back):
+			// pressing back clears search
+			m.clearSearch()
+
+			// pressing back also clears status line messages
+			m.importStatus = ""
+			return m, nil
+
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
@@ -602,15 +610,19 @@ func (m Model) updateRulePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *Model) clearSearch() {
+	m.searching = false
+	m.searchInput.Blur()
+	m.searchInput.SetValue("")
+	m.table.ClearSearch()
+}
+
 func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Back):
-			m.searching = false
-			m.searchInput.Blur()
-			m.searchInput.SetValue("")
-			m.table.ClearSearch()
+			m.clearSearch()
 			return m, nil
 		case key.Matches(msg, m.keys.Enter):
 			m.searching = false
