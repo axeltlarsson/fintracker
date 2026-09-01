@@ -83,12 +83,10 @@ func newStyles(t Theme) styles {
 		tableHeader: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(t.Subtle).
-			PaddingRight(2).
-			PaddingLeft(2),
+			Padding(0, 1),
 
 		tableCell: lipgloss.NewStyle().
-			PaddingRight(2).
-			PaddingLeft(2),
+			Padding(0, 1),
 
 		prompt: lipgloss.NewStyle().
 			PaddingLeft(2),
@@ -111,6 +109,7 @@ func newStyles(t Theme) styles {
 		statusRight: lipgloss.NewStyle().
 			Background(t.Surface).
 			Foreground(t.Muted).
+			Align(lipgloss.Right).
 			PaddingRight(2),
 
 		statusFilter: lipgloss.NewStyle().
@@ -159,21 +158,44 @@ func (s styles) transactionStyleFuncFromIdx(transactions []finance.Transaction, 
 
 		e := transactions[idx[row]]
 		v := projectTransaction(e, accts)
+		state := reviewStateOf(e, accts)
+
+		// Uncleared rows recede - except under the cursor, where legibiilty beats consistency
+		dim := state == stateReview && !selected
+		if dim {
+			base = base.Foreground(s.theme.Muted)
+		}
 
 		switch col {
-		case colAmount: // Amount
-			if v.Amount >= 0 {
-				return base.Foreground(s.theme.Pine)
+		case colStatus:
+			base = base.Foreground(s.statusColor(state))
+			if state == stateReview {
+				return base.Bold(true)
 			}
-			return base.Foreground(s.theme.Love).Align(lipgloss.Right)
+			return base
+		case colAmount:
+			if dim {
+				return base
+			}
+			return base.Foreground(s.amountColor(v.Amount))
 		case colCategory:
-			if v.Category == "" {
-				// TODO should use uncategorized style?
-				return base.Foreground(s.theme.Muted).Italic(true)
+			if dim {
+				return base.Italic(true)
 			}
 			return base.Foreground(s.theme.Foam).Italic(true)
 		}
 		return base
 
+	}
+}
+
+func (s styles) statusColor(r reviewState) color.Color {
+	switch r {
+	case stateReview:
+		return s.theme.Gold
+	case stateTransfer:
+		return s.theme.Muted
+	default:
+		return s.theme.Pine
 	}
 }

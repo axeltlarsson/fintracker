@@ -281,16 +281,27 @@ func (t TxnTable) View() string {
 	lt := table.New().
 		Headers(headers...).
 		Rows(tableRows...).
+		Wrap(false). // one data row = one line; the height budget depends on it
 		StyleFunc(func(row, col int) lipgloss.Style {
 			align := t.cols[col].Align
+			width := t.cols[col].Width
+
 			if row == table.HeaderRow {
-				return t.headerStyle.Align(align)
+				s := t.headerStyle.Align(align)
+				if width > 0 {
+					s = s.Width(width)
+				}
+				return s
 			}
 			absRow := row + offset
 			origRow := filtered[absRow]
 			isSelected := absRow == cursor
 			if styleFunc != nil {
-				return styleFunc(origRow, col, isSelected).Align(align)
+				s := styleFunc(origRow, col, isSelected).Align(align)
+				if width > 0 {
+					s = s.Width(width)
+				}
+				return s
 			}
 
 			// Fallback: default style
@@ -309,9 +320,18 @@ func (t TxnTable) View() string {
 
 	rendered := lt.Render()
 	// let table take up full height to prevent shrinking and status bar jumping when filtering rows
-	targetHeight := t.visibleRows + 3 // rows + header + top/bottom border
+	targetHeight := t.visibleRows + t.chromeHeight()
 	return lipgloss.PlaceVertical(targetHeight, lipgloss.Top, rendered)
 
+}
+
+// chromeHeight is the number of lines View renders in addition to the data rows
+func (t TxnTable) chromeHeight() int {
+	h := 3 // top border, header, header separator (blank lines for empty border)
+	if t.border.Bottom != "" {
+		h++
+	}
+	return h
 }
 
 func clamp(v, low, high int) int {

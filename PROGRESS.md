@@ -35,7 +35,7 @@ fintracker/
 │       ├── keys.go        # key.Binding definitions
 │       ├── styles.go      # design tokens: styles struct, StyleFunc, theme → style mapping
 │       ├── theme.go       # Rosé Pine palette (15 colors × 3 variants)
-│       ├── txntable.go    # custom interactive table (lipgloss rendering + cursor/scroll)
+│       ├── txntable.go    # custom interactive table (lipgloss rendering + cursor/scroll/chromeHeight)
 │       ├── transactionview.go  # transactionView + projectTransaction (domain → view-model projection)
 │       ├── import.go      # parallel CSV parse with errgroup + progress channel (pure, no DB)
 │       └── *_test.go
@@ -76,6 +76,7 @@ Dependency graph: `cmd/fintracker → tui, finance, importer, store` · `tui →
 - Errors propagated upward with fmt.Errorf wrapping (%w)
 - View is a pure render function; computation happens in Update
 - Maps for sets (map[string]bool), sorted key extraction for stable iteration
+- Layout is measured, not assumed — a component reports its own chrome (`TxnTable.chromeHeight`) and `Model.relayout` is the single owner of sizing
 
 ---
 
@@ -164,6 +165,7 @@ fintracker/
 ### Phase 12: Rosé Pine theme
 **Feature:** proper theming with Rosé Pine palette (main, moon, dawn variants).
 **Go concepts:** functional options, config structs, embedding for theme inheritance, color profile detection.
+**Follow-up:** live theme switching + robust detection → Phase 26.
 
 ### Phase 13: Accounting model (double-entry foundation)
 **Feature:** Core domain types for a proper journal-based model — `Account`, `Posting`, `Entry` (journal transaction), `Validate()`. Replaces the current flat `Transaction` model over subsequent phases. See `ACCOUNTING_ROADMAP.md` for full design.
@@ -254,6 +256,29 @@ fintracker/
 ### Phase 25: Distribution
 **Feature:** installable via Nix, goreleaser, `go install`.
 **Go concepts:** ldflags for version embedding, `buildGoModule` in flake.nix, goreleaser.
+
+### Phase 26: Live theme awareness (DEC mode 2031 + OSC 11)
+**Feature:** react to the terminal's light/dark theme flipping *while fintracker is running*, and harden the initial background-colour query.
+
+**Current state:** `Init` fires `tea.RequestBackgroundColor` (an OSC 11 query) exactly once; `tea.BackgroundColorMsg` picks `RoséPineMain` vs `RoséPineDawn` (`internal/tui/model.go:85`, `:323`). Two gaps: nothing happens if the terminal theme changes mid-session, and there is no fallback if the terminal never answers the query.
+
+**Simpler alternative — weigh this first (may make the whole phase moot):** stop shipping absolute hex colours and instead style everything from the **16 ANSI palette slots** (`lipgloss.Color("1")`…`"15"`, i.e. `ansi.Red`, `ansi.BrightBlack` …). The terminal already owns those slots and remaps them the instant its own theme flips — light/dark tracking, per-user themes and tmux all come for free, with zero escape sequences, no probe, no fallback chain and no terminal state to restore. Cost: we give up the exact Rosé Pine hues (users who theme their terminal in Rosé Pine get them anyway) and we're down to ~8 semantic slots, so the design-token layer has to be honest about which *roles* it really needs (accent / positive / negative / muted / border / highlight) rather than which 15 named colours. The `styles` struct is exactly the seam for that — views never touch `Theme`, so this is a rewrite of `theme.go` only. **Deferred: pick ANSI-only vs. the mode-2031 machinery below when we get here; ANSI-only currently looks like the elegant answer.**
+
+**Design:**
+- **Enable mode 2031 on startup** — `tea.Raw(ansi.SetModeLightDark)` (`\x1b[?2031h`). Supporting terminals then send an *unsolicited* OSC 11 report on every theme change, which bubbletea surfaces as another `tea.BackgroundColorMsg`. The existing handler already does the right thing with it.
+- **Probe support first** — `tea.Raw(ansi.RequestModeLightDark)` (DECRQM, `\x1b[?2031$p`) → `tea.ModeReportMsg`; treat as supported when `msg.Mode == ansi.ModeLightDark && !msg.Value.IsNotRecognized()`. Store `m.supportsLightDark` for the help/debug view.
+- **Reset on exit** — `ansi.ResetModeLightDark`. DEC modes are *terminal-global* state, not process state; leaving 2031 set leaks into whatever runs in that shell next.
+- **Fallback chain** for initial detection: OSC 11 reply → `COLORFGBG` env var → config override → assume dark. The OSC 11 query needs a timeout — terminals that don't implement it simply never reply.
+- **Luminance, not `IsDark()` alone** — compute relative luminance from the returned `color.Color` so a mid-grey background picks the right variant; leaves room for `RoséPineMoon` as "dark but softer".
+- **Config hook (ties into Phase 24):** `theme = "auto" | "main" | "moon" | "dawn"`; an explicit choice must win over detection.
+- **Consolidate the refresh** — the handler currently re-derives `styles`, the table style func and `help.Styles` inline. Factor into a single `func (m *Model) applyTheme(t Theme)` so a future style-carrying component can't be forgotten.
+
+**Go concepts:** raw escape sequences as commands (`tea.Raw`), terminal state as a resource that must be restored (same discipline as `defer f.Close()`), message-driven state refresh, environment-variable fallback chains, a method that consolidates an invariant.
+
+**Testing:** `Update` is pure — feed it a synthetic `tea.BackgroundColorMsg` / `tea.ModeReportMsg` and assert on `m.theme`. No PTY required.
+
+**Note:** 2031 is implemented by Ghostty, WezTerm, contour, foot and recent iTerm2; Terminal.app and older tmux will fall through to the probe-failed path, which is exactly why the probe exists.
+
 
 ### Key binding plan (end state)
 ```
@@ -626,29 +651,80 @@ q            quit
 
 ---
 
-## 🔧 HANDOFF — pick up here (review-state indicator, mid-flight)
+### Session 18 — review-state indicator finished + layout truthfulness (Phase 15 polish)
+**Date:** 2026-09-01
+**Covered:** Closed out the Session-17 WIP indicator (marker column, faded rows, coloured glyphs) and fixed the four layout lies it exposed. Also recorded the Phase-26 ANSI-palette alternative.
 
-**⚠️ CROSS-MACHINE / CLEANUP FIRST:** the review-indicator work is **uncommitted** — to move it to another computer, remove the debug line below, then commit (or `git stash` + push) so it travels via git. It does *not* build/run cleanly to hand over as-is.
+**Method worth reusing — the offline render harness.** Copied `go.mod`/`go.sum` into a scratch dir under `/tmp` (renamed the module), reimplemented `TxnTable.View`'s essentials, and rendered labelled variants at fixed widths with a column ruler. No PTY, no DB, no TUI restart — layout questions answered in seconds and *proven* rather than argued. Also read the vendored `lipgloss/v2@v2.0.2/table` source directly instead of guessing at behaviour. `tmux capture-pane -p [-e]` on the running app closed the loop: `-e` keeps the SGR sequences, so the rendered colours can be asserted (`\e[38;2;40;105;131m` = `#286983` = Pine) without eyeballing a screenshot.
 
-**🐛 STRAY DEBUG LINE — remove before anything:** `internal/tui/views.go`, in `renderReview`, there's a `m.reviewInput.SetValue("hej")` sitting right before `m.reviewInput.View()`. It forces the review input to render `"hej"` every frame, and it *mutates state inside a `View` function* (only the value-copy, so no persistent corruption — but View must stay pure). Delete that one line.
+**Layout findings (all four were dead or lying config):**
+1. **`TxnColumn.Width` was never applied** — lipgloss *does* support fixed columns, but only via `style.GetWidth()` read off the `StyleFunc` return (`resizing.go:93`); every expand/shrink loop then skips columns where `width == fixedWidth`. Fix: apply the width in both branches of `TxnTable.View`'s style closure. Only the marker column declares one — making *all* columns fixed removes the slack absorber and `Category` wraps instead of the table filling the terminal.
+2. **The gap before the date** was the expansion loop (`resizing.go:213-225`) repeatedly growing the *shortest* non-fixed column — the 1-char marker column was always the target. Fixed width solves it; `Align: Right` only hides it.
+3. **`Width` includes padding.** `{Width: 1}` against `tableCell`'s frame of 4 truncated the glyph to nothing — silent, no error (the markers vanished for one round-trip because of exactly this). Settled on `Padding(0, 1)` for both `tableCell` and `tableHeader` (was 2 each), i.e. frame 2 everywhere, `Width: 3` for the marker.
+4. **Header padding inflated every column's minimum**, because `column.xPadding` is a max over *all* rows including the header (`resizing.go:92`) — 6 columns × 2 extra chars was the difference between fitting and wrapping at 94 cols.
 
-**Where the indicator stands (uncommitted):**
-- ✅ **Step 1 (column plumbing):** `colStatus = 0` + shifted `col*` constants (`txntable.go`); marker column `{Title: "", Width: 1}` + per-row `*`/`!` glyph in `buildCols`/`buildRowsFromIdx` (`model.go`). Builds.
-- ⛔ **Layout gap UNRESOLVED:** glyph floats away from the date because `TxnColumn.Width` is dead config and the table stretches to fill. Decide the fix (right-align marker / prefix glyph onto date / make `Width` real). Simplest to try: `Align: lipgloss.Right` on the marker column.
-- ⬜ **Step 2 (styleFunc — the point of all this):** in `transactionStyleFuncFromIdx`, (a) after computing `e`, if `!e.Cleared && !selected` set `base = base.Foreground(s.theme.Muted)` to fade the row; (b) add `case colStatus:` → `*`/cleared in a calm color (Pine/Muted), `!`/uncleared in an attention color (Gold) so the marker pops even on a faded row; (c) gate the `colAmount`/`colCategory` colors on `e.Cleared` so faded rows stay muted. Replace the dead `v.Category == ""` branch with `e.Cleared`.
-- ⬜ **Step 3 (legend):** a muted `* cleared  ! review` note in the list-screen help footer (`views.go`, the `listScreen` join).
+**`Wrap(false)` — the height contract.** `table.wrap` defaults true (`table.go:90`), so a long payee silently made a row 2+ lines tall: measured **13 lines for 5 data rows**, against a budget that assumes 1 line per row. It broke the layout from *inside* the component, which is why it's hard-coded rather than exposed as an option. `Wrap(false)` truncates with `…` (`table.go:555`) and degrades cleanly down to 60 cols.
 
-**Re-point on save (done, `bd6c025`) recap:** save a rule during review → all *uncleared, placeholder-parked* transactions matching the pattern re-point to the rule's account, still `cleared=0`. `RepointPostings` is atomic; scope guard = only `Equity:Uncategorized` rows move.
+**Border.** `WithTxnBorder` had never been called, so the border was the zero `lipgloss.Border{}` — top border and header separator still rendered as **blank lines** (measured: chrome = rows + 3 either way, rows + 4 with a real border). Switched to `RoundedBorder()`, and replaced the duplicated `3` (one in `model.go`'s budget, one in `View`) with `TxnTable.chromeHeight()`, guarded on `t.border.Bottom != ""` so it stays correct for both configurations.
 
-**Phase 15 MVP recap:** `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded.
+**styleFunc (the point of the exercise):** `dim := !e.Cleared && !selected` fades uncleared rows, `case colStatus` colours `*` Pine / `!` Gold+bold and *deliberately ignores* `dim` so the marker survives a faded row. Precedence rule chosen: **background encodes selection, foreground encodes semantics** — every `return base.Foreground(...)` inherits the cursor's `HighlightLow` background, and the cursor row is never dimmed (Muted-on-HighlightLow is the worst contrast in the table for the one row you're about to act on). New token `styles.statusColor(cleared bool) color.Color` alongside `amountColor`. Removed two dead branches: `v.Category == ""` (never true — `projectTransaction` always sets a path; the Session-13 intent was `!e.Cleared`) and a stray `.Align(lipgloss.Right)` that `TxnTable.View` overwrites on every frame.
 
-**Phase 15 extensions:** ✅ (c) **write a `payee_rule` on review** — DONE (Session 16) + re-point refinement DONE (Session 17). Not yet built: (a) **memo / tags / normalized-payee** editing during review. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split; needs a wholesale posting-rewrite variant of `ReviewTransaction` (delete+reinsert in one tx). (d) **visible filtered pick-list** instead of inline autocomplete.
+**Status line.** `lipgloss` `Width(n)` is a *minimum* that wraps; `MaxWidth(n)` clips per line *after* wrapping (so `Width+MaxWidth` alone still yields two clipped lines). Fixed with `clampToWidth(s, style, w)` = `style.Width(w).Render(ansi.Truncate(s, w-style.GetHorizontalFrameSize(), "…"))` — ANSI-aware truncation, the same function the lipgloss table uses; promoted `github.com/charmbracelet/x/ansi` from indirect to direct. `ansi.Truncate` with a negative length returns `""` rather than panicking (probed). `statusRight` gained `Align(lipgloss.Right)` — alignment is inert without a width, which is the same reason the column `Align` only works because the table assigns widths.
 
-**Phase 15 MVP recap:** `c` on an uncleared row → type a contra account (autocomplete) → enter → atomically repointed + cleared + reloaded. `Equity:Uncategorized`'s balance is literally the review-queue length.
+**Legend: built, then deleted.** Rendered fine but had nowhere to live — 20 cells the help row doesn't have at 94 cols (it clipped), and the status line's middle third is reserved for messages. Decision: it belongs in the full help; deferred (see handoff (b)). `glyphCleared`/`glyphReview` consts kept and used by `buildRowsFromIdx`.
 
-**Phase 15 extensions:** ✅ (c) **write a `payee_rule` on review** — DONE (Session 16; re-point-on-save refinement pending, above). Not yet built: (a) **memo / tags / normalized-payee** editing during review — the MVP only sets the contra account + cleared. (b) **split editor** — >2 postings; `contraPosting` returns only the first, and the picker can't split. `ReviewTransaction` would need a wholesale posting-rewrite variant (delete+reinsert in one tx), distinct from the surgical `UpdatePosting`. (d) **visible filtered pick-list** instead of inline autocomplete (Axel chose textinput+autocomplete for the MVP).
+**`relayout()` — the session's real architectural fix.** Pressing `?` made the status line vanish: `helpH = 2` hard-coded "the help is one line", `FullHelp()` renders three, and nothing recomputed sizing outside `WindowSizeMsg`. Extracted all sizing into `func (m *Model) relayout()` with `helpH := lipgloss.Height(m.styles.help.Render(m.help.View(m.keys)))` — measured, so it covers both help states — guarded by `if !m.ready { return }` so it's safe to call from anywhere. Three callers: resize, help toggle, and `esc`. Axel extended `esc` to also collapse expanded help, so `esc` now uniformly means "back out of every transient view state" (search + status message + expanded help), and folded the duplicated search teardown into `func (m *Model) clearSearch()`.
 
-**Deferred polish (note, don't block):** (a) **status line**: `importStatus`/`importStatus` message never clears (no reset-on-transition — same lifecycle bug as `reviewErr`, now fixed) AND it wraps on a narrow window (needs width-clamping/truncation). Axel flagged both — "fix soon." (b) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong (different account types); relabel/reposition. (c) proper **state machine** for screens/input-modes — the `search`(bool-on-listScreen) vs `review`(real-screen) split forced a `reviewScreen`-exclusion hack in the global `Quit` handler; `ctrl-c` won't hard-quit from review. (d) unify `contraPosting` with `projectTransaction`'s asset/contra detection (minor dup). (e) empty `internal/finance/testdata/` dir can be `rmdir`'d.
+**Go idiom noted:** pointer-receiver helpers (`relayout`, `clearSearch`) called from value-receiver `Update` methods — Go auto-takes the address of the addressable local `m`, so it reads as mutation while `Update` stays a pure function of the incoming model.
 
-**Still-uncovered Go concepts (opportunistic):** `errors.As` + a custom error *struct* type (FK-violation on bad account_id is the natural trigger — `errors.Is` done via `ErrDuplicateTransaction`/`sql.ErrNoRows`); generics; benchmarking; `iter`/range-over-func.
+**Also recorded:** Phase 26 now leads with the **ANSI-palette alternative** — style from the 16 terminal palette slots and light/dark tracking, per-user themes and tmux come free, with no OSC 11 probe, no fallback chain and no terminal state to restore. Deferred, but currently the more elegant answer than the mode-2031 machinery.
 
+**Concepts practiced:** reading a dependency's source to settle behaviour instead of guessing, offline render harness as a debugging tool, fixed-vs-flexible layout budgeting, style composition (colours compose onto a base, whole styles replace it), a full reset (`\e[0m`) killing an outer background — styled strings compose by construction not concatenation, ANSI-aware truncation vs byte/rune slicing, derived state recomputed by every input that affects it, dead-config and dead-branch smells.
+
+**Exercise done the same evening — the third review state.** The `!` glyph was lying on transfers: a transaction whose legs are all Asset/Liability has no contra posting, so `c` silently did nothing on a row painted attention-Gold. Replaced the boolean with `reviewState` (`stateCleared`/`stateReview`/`stateTransfer`, `iota`) + `reviewStateOf(t, accts)` + a `glyph()` method in `transactionview.go`, and `statusColor` now switches on the state (Gold = act, Pine = done, Muted = nothing to do, bold reserved for the one actionable state). Transfers are **not** dimmed: the review queue *is* `Equity:Uncategorized`'s balance and a transfer was never in it. `dim` became `state == stateReview && !selected`. Payoff: `updateList`'s Review guard collapsed from two checks into `reviewStateOf(*t, m.accountsByID) != stateReview`, so what the marker says and what `c` does are now one expression. Go gotcha met on the way: in a const block a type does *not* carry to the next line when an expression is given (`glyphCleared glyph = "*"` then `glyphReview = "!"` leaves the second untyped) — repetition only happens when the expression is omitted, which is why the `iota` idiom works.
+
+**Transfer fixture:** `testdata/seb.csv` gained `ÖVERFÖRING Sparkonto` / `ÖVERFÖRING Investering` rows (field 4 is ignored by `parseRow`). Note that CSV rows alone can't produce a transfer — `PlaceholderTransactions` parks every contra leg on Equity, so both import as `!`. A transfer appears when the contra leg lands on an Asset/Liability account, i.e. review *one* row to `Assets:Bank:Sparkonto` and save the rule `ÖVERFÖRING`; the Session-17 sweep re-points the other row while leaving `cleared = 0` → `stateTransfer`. **Not yet run end-to-end** (see handoff).
+
+**Status:** `go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l` all clean. No `ci` script in this repo. Verified in the running app at 94×28.
+
+---
+
+## 🔧 HANDOFF — pick up here
+
+**⚠️ UNCOMMITTED but green:** the `reviewState` work (`internal/tui/{transactionview,styles,model}.go`) and the two `ÖVERFÖRING` rows in `testdata/seb.csv`. `go build`/`go vet`/`go test ./...`/`gofmt -l` all clean; **not yet exercised in the running app**. Commit or stash before switching machines. Everything before it is committed at `b296266`.
+
+**Step 1 — trivial:** restore the truncated comment in `transactionview.go`: `Account string // the asset/liability ("from") account path`.
+
+**Step 2 — prefill the review input (decided, snippets agreed, not yet typed).** Two edits, one idea: *the review screen should show what the transaction currently claims, and only ask to remember when you changed its mind.*
+- `updateList`'s Review case: invert the guard to `if t == nil || reviewStateOf(*t, m.accountsByID) == stateTransfer { return m, nil }` — "cleared" was never the reason to refuse; a missing contra leg is. This makes **re-review of cleared rows** possible, which the store already supports (`ReviewTransaction` repoints whatever posting ID it's given and sets `cleared = 1`; it makes no placeholder assumption).
+- Seed `m.reviewInput` with the current contra path (skipping `placeholderAccount`, then `CursorEnd()`) instead of `SetValue("")`. This is what makes a **rule-fired row a one-keystroke confirm** — its contra leg already *is* the rule's account.
+- In `updateReview`'s Enter branch, capture `wasPath := m.accountsByID[contra.AccountID].Path` *before* `ReviewTransaction`, and extend the rule-prompt skip to `payee == "" || path == placeholderAccount || path == wasPath`. Derived, not stored — a `Model` field would need resetting on every leaving path (the Session 15–16 bug family). Flows: first review → prompt; re-review with a change → prompt; confirm a rule's guess → straight back to the list.
+
+**Step 3 — verify the transfer glyph end-to-end:**
+```sh
+rm -f /tmp/ft-transfer.db
+go run ./cmd/fintracker -db /tmp/ft-transfer.db "Assets:Bank:SEB=testdata/seb.csv"
+# c on ÖVERFÖRING Sparkonto → Assets:Bank:Sparkonto → rule pattern "ÖVERFÖRING"
+sqlite3 /tmp/ft-transfer.db "select t.id, t.cleared, a.path, p.amount from transactions t
+  join postings p on p.transaction_id = t.id join accounts a on a.id = p.account_id
+  where t.raw_payee like 'ÖVERFÖRING%' order by t.id, p.id;"
+```
+Expect: reviewed row `cleared=1` → `*` Pine; the swept row `cleared=0` with a leg on `Assets:Bank:Sparkonto` → `→` Muted, undimmed.
+
+**Two design decisions waiting (both surfaced by the third state):**
+1. **`cleared` is overloaded** — it means both "a human confirmed this" and "this has a real contra account". A rule-repointed transfer satisfies the second without the first, and since `c` correctly refuses transfers, *nothing in the UI can ever clear it*: it sits as `→` forever and the queue count lies. Options: (i) let `c` on a transfer confirm-without-recategorizing, (ii) have the re-point sweep clear rows it moves off the placeholder, (iii) treat "no contra leg" as inherently cleared. Decide before the queue count matters.
+2. **Rule pattern collisions on re-review** — `EnsurePayeeRule` is keyed on `(pattern, default_account_id)`, so correcting `ICA → Groceries` to `ICA → Restaurants` creates a *second* `ICA` rule, both `Priority: 0`; `matchRule` takes the first pattern match in ascending-priority order, so the old wrong rule can keep winning while the UI reports success. Options: upsert on pattern alone (one pattern → one account — matches how you'd describe the feature out loud, but changes `EnsurePayeeRule`'s contract and tests), detect-and-offer-"update", or skip the prompt when a rule for that pattern exists. Step 2's `path == wasPath` skip disarms only the *confirm* path; the genuine-correction path still needs this.
+
+**Deferred polish (note, don't block):**
+- (a) ~~status line never clears / wraps on a narrow window~~ — **DONE** Session 18.
+- (b) **status-marker legend** — has no home yet. *Not* the status line's middle third (reserved for messages) and *not* the help row (20 cells it doesn't have at 94 cols — it clipped). Home: the **full help** (`?`), affordable now that `relayout` measures help height. Either append a legend line to the rendered help in `views.go` when `m.help.ShowAll`, or express it as `key.Binding`s in `FullHelp()` — note a binding built without `WithKeys` is `Enabled() == false` and the help component skips it. Three states to explain now, not two: `glyphCleared`/`glyphReview`/`glyphTransfer` consts live in `views.go`, and `styles.statusColor(reviewState)` gives the matching colours.
+- (c) summary view appends `netWorth` as the "Total" row of the *Category* table — semantically wrong (different account types); relabel/reposition.
+- (d) proper **state machine** for screens/input-modes — `search` (a bool on `listScreen`) vs real screens still forces a `reviewScreen`/`rulePromptScreen` exclusion list in the global Quit handler; `ctrl-c` won't hard-quit from review.
+- (e) unify `contraPosting` with `projectTransaction`'s asset/contra detection (minor dup).
+- (f) empty `internal/finance/testdata/` dir can be `rmdir`'d.
+- (g) `TxnColumn.Width` is honest now, but only the marker column sets one. Rule: **a fixed width must cover the cell's own frame** — `Width: 3` = 1 glyph + `tableCell`'s `Padding(0, 1)`. Declare it smaller than the padding and lipgloss truncates the content to nothing, silently.
+- (h) the rounded table border is new and provisional — `WithTxnBorder` is one line to drop and `chromeHeight()` adapts on its own.
+
+**Phase 15 status:** MVP done (`c` on an uncleared row → type a contra account with autocomplete → enter → atomically repointed + cleared + reloaded; `Equity:Uncategorized`'s balance *is* the review-queue length). ✅ (c) payee_rule written on review + re-point-on-save. Not built: (a) memo / tags / normalized-payee editing, (b) **split editor** for >2 postings — `contraPosting` returns only the first and the picker can't split, so `ReviewTransaction` needs a wholesale posting-rewrite variant (delete + reinsert in one tx); this is also the blocker for editing a transfer's legs, (d) visible filtered pick-list instead of inline autocomplete.
+
+**Still-uncovered Go concepts (opportunistic):** `errors.As` + a custom error *struct* type (an FK violation on a bad `account_id` is the natural trigger — `errors.Is` already covered via `ErrDuplicateTransaction`/`sql.ErrNoRows`); generics; benchmarking; `iter` / range-over-func; `sync` primitives; `net/http`; JSON.

@@ -2,10 +2,40 @@ package tui
 
 import "fintracker/internal/finance"
 
+type reviewState int
+
+const (
+	stateCleared reviewState = iota
+	stateReview
+	stateTransfer
+)
+
+func reviewStateOf(t finance.Transaction, accts map[int64]finance.Account) reviewState {
+	if t.Cleared {
+		return stateCleared
+	}
+	if _, ok := contraPosting(t, accts); !ok {
+		return stateTransfer
+	}
+	return stateReview
+}
+
+func (r reviewState) glyph() string {
+	switch r {
+	case stateCleared:
+		return glyphCleared
+	case stateTransfer:
+		return glyphTransfer
+	default:
+		return glyphReview
+	}
+
+}
+
 // transactionView is the flat projection of an Transaction for table/detail display
 // derived on demand from the postings - never stored
 type transactionView struct {
-	Account  string // the asset/liability ("from") account path)
+	Account  string // the asset/liability ("from") account path
 	Amount   finance.Öre
 	Category string // contra account path; "(split)" when >2 postings
 }

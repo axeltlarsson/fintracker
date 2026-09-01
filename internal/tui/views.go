@@ -9,10 +9,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2/table"
 	"fintracker/internal/finance"
+	"github.com/charmbracelet/x/ansi"
 	"sort"
 )
 
 const uncategorized = "(uncategorized)"
+
+const (
+	glyphCleared  = "*"
+	glyphReview   = "!"
+	glyphTransfer = "→"
+)
 
 func (m Model) View() tea.View {
 
@@ -131,7 +138,6 @@ func (m Model) renderReview() string {
 	b.WriteString(m.styles.value.Render(v.Category))
 	b.WriteString("\n\n")
 	b.WriteString(m.styles.label.Render("Contra account "))
-	m.reviewInput.SetValue("hej")
 	b.WriteString(m.reviewInput.View())
 	b.WriteString("\n\n")
 	if m.reviewErr != "" {
@@ -291,8 +297,14 @@ func (m Model) renderStatusLine() string {
 	rightW := m.width / 3
 	middleW := m.width - leftW - rightW
 
-	return m.styles.statusLeft.Width(leftW).Render(left) +
-		m.styles.statusMiddle.Width(middleW).Render(middle) +
-		m.styles.statusRight.Width(rightW).Render(right)
+	return clampToWidth(left, m.styles.statusLeft, leftW) +
+		clampToWidth(middle, m.styles.statusMiddle, middleW) +
+		clampToWidth(right, m.styles.statusRight, rightW)
 
+}
+
+// clampToWidth renders s at exactly w cells, truncating so a long
+// message can never wrap the status line onto a second row
+func clampToWidth(s string, st lipgloss.Style, w int) string {
+	return st.Width(w).Render(ansi.Truncate(s, w-st.GetHorizontalFrameSize(), "…"))
 }

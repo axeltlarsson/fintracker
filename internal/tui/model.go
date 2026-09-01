@@ -94,6 +94,7 @@ func InitialModelFromStore(store *store.Store, specs []ImportSpec) (Model, error
 		WithTxnHeight(20),
 		// Appearance - from styles, model just wires it up
 		WithTxnHeaderStyle(st.tableHeader),
+		WithTxnBorder(lipgloss.RoundedBorder()),
 		WithTxnBorderStyle(st.tableBorder),
 	)
 
@@ -336,28 +337,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Layout budget - each element's fixed height
-		const (
-			titleH       = 3 // title text + margin bottom
-			tableBorderH = 3 // header row + top/bottom border
-			statusLineH  = 1
-			helpH        = 2 // help text + margin top
-		)
-		chrome := titleH + tableBorderH + statusLineH + helpH
-		tableRows := max(msg.Height-chrome, 1)
 		if !m.ready {
 			m.viewport = viewport.New()
 			m.ready = true
 		}
 
-		m.table.SetWidth(msg.Width)
-		m.table.SetHeight(tableRows)
-		m.searchInput.SetWidth(msg.Width / 3) // reasonable width for status line context
-		m.reviewInput.SetWidth(msg.Width / 2)
-		m.ruleInput.SetWidth(msg.Width / 2)
-		m.viewport.SetWidth(msg.Width - 4)
-		m.viewport.SetHeight(msg.Height - 2) // detail/summary screens: minimal chrome
-		m.help.SetWidth(msg.Width)
+		m.relayout()
 
 		return m, nil
 
@@ -425,12 +410,10 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Review):
 			t := m.selectedTransaction()
-			if t == nil || t.Cleared {
+			if t == nil || reviewStateOf(*t, m.accountsByID) != stateReview {
 				return m, nil
 			}
-			if _, ok := contraPosting(*t, m.accountsByID); !ok {
-				return m, nil // no contra to categorize (e.g. a transfer)
-			}
+
 			m.screen = reviewScreen
 			m.reviewInput.SetValue("")
 			m.reviewInput.SetSuggestions(accountPaths(m.accountsByID))
@@ -461,10 +444,16 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// pressing back also clears status line messages
 			m.importStatus = ""
+
+			// pressing back clears expanded help
+			m.help.ShowAll = false
+			m.relayout()
+
 			return m, nil
 
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
+			m.relayout()
 			return m, nil
 
 		case key.Matches(msg, m.keys.Quit):
@@ -641,12 +630,12 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func buildCols() []TxnColumn {
 	return []TxnColumn{
-		{Title: "", Width: 1},
-		{Title: "Date", Width: 12},
-		{Title: "Payee", Width: 25},
-		{Title: "Amount", Width: 14, Align: lipgloss.Right},
-		{Title: "Account", Width: 12},
-		{Title: "Category", Width: 18},
+		{Title: "", Width: 3, Align: lipgloss.Right}, // 1 glyph + tableCell's 2 padding
+		{Title: "Date"},
+		{Title: "Payee"},
+		{Title: "Amount", Align: lipgloss.Right},
+		{Title: "Account"},
+		{Title: "Category"},
 	}
 }
 
@@ -655,12 +644,8 @@ func buildRowsFromIdx(transactions []finance.Transaction, accts map[int64]financ
 	for _, i := range idx {
 		e := transactions[i]
 		v := projectTransaction(e, accts)
-		marker := "!"
-		if e.Cleared {
-			marker = "*"
-		}
 		rows = append(rows, []string{
-			marker,
+			reviewStateOf(e, accts).glyph(),
 			e.Date.Format("2006-01-02"),
 			e.DisplayPayee(),
 			v.Amount.String(),
@@ -773,4 +758,28 @@ func (m *Model) reload() error {
 
 	return nil
 
+}
+
+// relayout recomputes component sizes from the current window size and anything
+// else that affects the vertical budget (e.g. an expanded help, a bordered table)
+func (m *Model) relayout() {
+	if !m.ready {
+		return
+	}
+
+	const (
+		titleH      = 3 // title text + margin bottom
+		statusLineH = 1
+	)
+	helpH := lipgloss.Height(m.styles.help.Render(m.help.View(m.keys)))
+	chrome := titleH + m.table.chromeHeight() + statusLineH + helpH
+
+	m.table.SetWidth(m.width)
+	m.table.SetHeight(max(m.height-chrome, 1))
+	m.searchInput.SetWidth(m.width / 3)
+	m.reviewInput.SetWidth(m.width / 2)
+	m.ruleInput.SetWidth(m.width / 2)
+	m.viewport.SetWidth(m.width - 4)
+	m.viewport.SetHeight(m.height - 2)
+	m.help.SetWidth(m.width)
 }
